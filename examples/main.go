@@ -39,14 +39,14 @@ func main() {
 		log.Fatal("Cannot create store redis")
 	}
 
-	kv.Put("router/register/googleeg", []byte("googleeg"), nil)
-	kv.Put("router/backend/googleeg/sni", []byte("www.google.com.eg"), nil)
-	kv.Put("router/backend/googleeg/addr", []byte("172.217.18.227:443"), nil)
+	kv.Put("router/register/google", []byte("google"), nil)
+	kv.Put("router/backend/google/sni", []byte("www.google.com"), nil)
+	kv.Put("router/backend/google/addr", []byte("172.217.19.46:443"), nil)
 
 
 	kv.Put("router/register/bing", []byte("bing"), nil)
-	kv.Put("router/backend/bing/sni", []byte("bing.com"), nil)
-	kv.Put("router/backend/bing/addr", []byte("204.79.197.200:443"), nil)
+	kv.Put("router/backend/bing/sni", []byte("www.bing.com"), nil)
+	kv.Put("router/backend/bing/addr", []byte("13.107.21.200:443"), nil)
 
 
 }

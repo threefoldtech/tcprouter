@@ -1,0 +1,10 @@
+[server]
+addr = "0.0.0.0"
+port = 443
+
+[server.dbbackend]
+type 	 = "redis"
+username = "auser2"
+password = "apassword2"
+addr     = "127.0.0.1"
+port     = 6379

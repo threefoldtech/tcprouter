@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"io/ioutil"
+
 	//"github.com/abronan/valkeyrie/store/boltdb"
 	//"github.com/abronan/valkeyrie/store/etcd/v2"
 	"io"
@@ -32,24 +34,23 @@ var validBackends = map[string]store.Backend{
 var routerConfig tomlConfig
 
 func init() {
-	fmt.Println("called.")
+	if len(os.Args) != 2 {
+		fmt.Println("need to pass config file.")
+		os.Exit(4)
+	}
+	configFilePath := os.Args[1]
+	fmt.Println("reading config from : ", configFilePath)
+	bytes, err := ioutil.ReadFile(configFilePath)
+	if err != nil {
+		fmt.Println("Error reading config file ", configFilePath, " err: ", err)
+	}
+	cfg := string(bytes)
+
 	redis.Register()
 	//boltdb.Register()
 	//etcd.Register()
 
-	cfg := `
-[server]
-addr = "0.0.0.0"
-port = 443
 
-[server.dbbackend]
-type 	 = "redis"
-username = "auser"
-password = "apassword"
-addr     = "127.0.0.1"
-port     = 6379
-
-`
 	c, err := ParseCfg(cfg)
 	if err != nil {
 		fmt.Println("invalid toml. cfg: ", cfg)
@@ -166,11 +167,8 @@ func (s *Server) Start() {
 	}
 }
 func main() {
-	fmt.Println("called main")
 	fmt.Println("main config: ", routerConfig)
 	kvStore, _ := validBackends[routerConfig.Server.DbBackend.DbType] // at this point backend exists or the app would have exited.
-	fmt.Println("Dbtype: ", routerConfig.Server.DbBackend.DbType)
-	fmt.Println("kvstore: ", kvStore, routerConfig.Server.DbBackend.DbType)
 	// Initialize a new store with dbbackendtype
 	kv, err := valkeyrie.NewStore(
 		kvStore,
@@ -227,12 +225,12 @@ func (s *Server) handleConnection(mainconn net.Conn) error {
 	// remoteAddr := fmt.Sprintf("%s:%d",s.ServerOptions.remoteAddr,  s.ServerOptions.remotePort)
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP(backend.Addr), Port: backend.Port}
 	fmt.Println("found backend: ", remoteAddr)
-	fmt.Println("Handling connection from %s", conn.RemoteAddr())
+	fmt.Println("handling connection from ", conn.RemoteAddr())
 	defer conn.Close()
 
 	connBackend, err := net.DialTCP("tcp", nil, remoteAddr)
 	if err != nil {
-		fmt.Println("Error while connection to backend: %v", err)
+		fmt.Println("error while connection to backend: %v", err)
 		return err
 	} else {
 		fmt.Println("connected to the backend...")
