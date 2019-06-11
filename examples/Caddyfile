@@ -1,0 +1,5 @@
+https://site.dev {
+	tls self_signed
+	root /home/xmonader/Pictures
+	browse
+}

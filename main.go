@@ -5,9 +5,12 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	//"github.com/abronan/valkeyrie/store/boltdb"
+	//"github.com/abronan/valkeyrie/store/etcd/v2"
 	"io"
 	"log"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,11 +19,51 @@ import (
 	"github.com/abronan/valkeyrie"
 	"github.com/abronan/valkeyrie/store"
 	"github.com/abronan/valkeyrie/store/redis"
+	//"github.com/abronan/valkeyrie/store/boltdb"
+	//etcd "github.com/abronan/valkeyrie/store/etcd/v3"
+
 )
+var validBackends = map[string]store.Backend{
+	"redis": store.REDIS,
+	"boltdb": store.BOLTDB,
+	"etcd": store.ETCDV3,
+
+}
+var routerConfig tomlConfig
 
 func init() {
-
+	fmt.Println("called.")
 	redis.Register()
+	//boltdb.Register()
+	//etcd.Register()
+
+	cfg := `
+[server]
+addr = "0.0.0.0"
+port = 443
+
+[server.dbbackend]
+type 	 = "redis"
+username = "auser"
+password = "apassword"
+addr     = "127.0.0.1"
+port     = 6379
+
+`
+	c, err := ParseCfg(cfg)
+	if err != nil {
+		fmt.Println("invalid toml. cfg: ", cfg)
+		os.Exit(2)
+
+	}
+
+	_, exists := validBackends[c.Server.DbBackend.DbType]
+	if !exists {
+		fmt.Println("invalid dbbackend type: ", c.Server.DbBackend.DbType)
+		os.Exit(3)
+	}
+	routerConfig = c
+	fmt.Println("routerConfig now: ", routerConfig)
 }
 
 type Backend struct {
@@ -70,31 +113,37 @@ func (s *Server) monitorDbForBackends() {
 			fmt.Println("backedname :", backendName)
 			sniKey := fmt.Sprintf("router/backend/%s/sni", backendName)
 			addrKey := fmt.Sprintf("router/backend/%s/addr", backendName)
-			fmt.Println("sni key: ", sniKey)
-			fmt.Println("addr key: ", addrKey)
+			//fmt.Println("sni key: ", sniKey)
+			//fmt.Println("addr key: ", addrKey)
 
-			backendSNI, _ := s.DbStore.Get(sniKey, nil)
+			backendSNI, err := s.DbStore.Get(sniKey, nil)
+			if err != nil {
+				fmt.Println("ERR SNI: ", err)
+				continue
+			}
 			fmt.Println(string(backendSNI.Value), err)
 
-			backendAddr, _ := s.DbStore.Get(addrKey, nil)
+			backendAddr, err := s.DbStore.Get(addrKey, nil)
+			if err != nil {
+				fmt.Println("ERR backendAddr: ", backendAddr)
+				continue
+			}
 			fmt.Println("*****backendAddr: ", backendAddr.Value)
 			parts := strings.Split(string(backendAddr.Value), ":")
 			addr, portStr := parts[0], parts[1]
-			port, _ := strconv.Atoi(portStr)
+			port, err := strconv.Atoi(portStr)
+			if err != nil {
+				continue
+			}
 			s.RegisterBackend(string(backendSNI.Value), addr, port)
 
 		}
-		time.Sleep(time.Second * 3)
+		time.Sleep(time.Second * 30)
 	}
 
 }
 
 func (s *Server) Start() {
-
-	s.DbStore.Put("router/register/server1", []byte("server1"), nil)
-	s.DbStore.Put("router/backend/server1/sni", []byte("server1.com"), nil)
-	s.DbStore.Put("router/backend/server1/addr", []byte("127.0.0.1:5500"), nil)
-
 	go s.monitorDbForBackends()
 
 	var ln net.Listener
@@ -117,17 +166,21 @@ func (s *Server) Start() {
 	}
 }
 func main() {
-
-	// Initialize a new store with consul
+	fmt.Println("called main")
+	fmt.Println("main config: ", routerConfig)
+	kvStore, _ := validBackends[routerConfig.Server.DbBackend.DbType] // at this point backend exists or the app would have exited.
+	fmt.Println("Dbtype: ", routerConfig.Server.DbBackend.DbType)
+	fmt.Println("kvstore: ", kvStore, routerConfig.Server.DbBackend.DbType)
+	// Initialize a new store with dbbackendtype
 	kv, err := valkeyrie.NewStore(
-		store.REDIS,
-		[]string{"127.0.0.1:6379"},
+		kvStore,
+		[]string{fmt.Sprintf("%s:%d" , routerConfig.Server.DbBackend.Addr, routerConfig.Server.DbBackend.Port)},
 		&store.Config{
 			ConnectionTimeout: 10 * time.Second,
 		},
 	)
 	if err != nil {
-		log.Fatal("Cannot create store redis")
+		log.Fatal("Cannot create store redis", err)
 	}
 
 	serverOpts := ServerOptions{listeningAddr: "0.0.0.0", listeningPort: 443}
@@ -135,8 +188,8 @@ func main() {
 	s.DbStore = kv
 	s.Backends = make(map[string]Backend)
 	// let's make it configurable later.
-	s.Backends["*"] = Backend{Addr: "127.0.0.1", Port: 9092}
-	s.Backends["first.mybot.testsbots.grid.tf"] = Backend{Addr: "37.59.44.168", Port: 443}
+	//s.Backends["*"] = Backend{Addr: "127.0.0.1", Port: 9092}
+	//s.Backends["first.mybot.testsbots.grid.tf"] = Backend{Addr: "37.59.44.168", Port: 443}
 	s.Start()
 
 }
@@ -153,7 +206,7 @@ func GetConn(conn net.Conn, peeked string) net.Conn {
 func (s *Server) handleConnection(mainconn net.Conn) error {
 	br := bufio.NewReader(mainconn)
 	serverName, isTls, peeked := clientHelloServerName(br)
-	fmt.Println("SERVER NAME: ", serverName, " isTLS: ", isTls)
+	fmt.Println("*************** SERVER NAME: SNI ", serverName, " isTLS: ", isTls)
 
 	conn := GetConn(mainconn, peeked)
 	serverName = strings.ToLower(serverName)
