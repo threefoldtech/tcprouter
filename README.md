@@ -5,6 +5,14 @@ a down to earth tcp router based on traefik tcp streaming and supports multiple 
 
 ## Build
 
+```
+git clone https://github.com/xmonader/tcprouter 
+cd tcprouter
+go build
+```
+
+## Install
+
 ```bash
 go get -u github.com/xmonader/tcprouter
 ```
