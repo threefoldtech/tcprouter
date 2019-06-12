@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"time"
 
@@ -25,6 +26,12 @@ func init() {
 
 }
 
+type Service struct {
+	Addr string `json:"addr"`
+	SNI  string `json:"sni"`
+	Name string `json:"bing"`
+}
+
 func main() {
 
 	// Initialize a new store with redis
@@ -38,15 +45,13 @@ func main() {
 	if err != nil {
 		log.Fatal("Cannot create store redis")
 	}
+	google := &Service{Addr:"172.217.19.46:443", SNI:"www.google.com", Name:"google"}
+	encGoogle, _ := json.Marshal(google)
+	bing := &Service{Addr:"13.107.21.200:443", SNI:"www.bing.com", Name:"bing"}
+	encBing, _ := json.Marshal(bing)
 
-	kv.Put("router/register/google", []byte("google"), nil)
-	kv.Put("router/backend/google/sni", []byte("www.google.com"), nil)
-	kv.Put("router/backend/google/addr", []byte("172.217.19.46:443"), nil)
-
-
-	kv.Put("router/register/bing", []byte("bing"), nil)
-	kv.Put("router/backend/bing/sni", []byte("www.bing.com"), nil)
-	kv.Put("router/backend/bing/addr", []byte("13.107.21.200:443"), nil)
+	kv.Put("/tcprouter/service/google", encGoogle, nil)
+	kv.Put("/tcprouter/service/bing", encBing, nil)
 
 
 }

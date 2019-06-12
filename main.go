@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 
@@ -25,6 +26,10 @@ import (
 	//etcd "github.com/abronan/valkeyrie/store/etcd/v3"
 
 )
+
+const (
+	defaultRefresh = 30 * time.Second
+)
 var validBackends = map[string]store.Backend{
 	"redis": store.REDIS,
 	"boltdb": store.BOLTDB,
@@ -32,6 +37,12 @@ var validBackends = map[string]store.Backend{
 
 }
 var routerConfig tomlConfig
+
+type TCPService struct {
+	Name string `json:"name"`
+	Addr string `json:"addr"`
+	SNI  string `json:"sni"`
+}
 
 func init() {
 	if len(os.Args) != 2 {
@@ -105,41 +116,30 @@ func (s *Server) monitorDbForBackends() {
 
 	for {
 
-		backendPairs, err := s.DbStore.List("router/register/", nil)
+		backendPairs, err := s.DbStore.List("tcprouter/service/", nil)
 		// fmt.fmt.Println("backendPairs", backendPairs, " err: ", err)
 		fmt.Println(err)
 		fmt.Println(len(backendPairs))
 		for _, backendPair := range backendPairs {
-			backendName := string(backendPair.Value)
-			fmt.Println("backedname :", backendName)
-			sniKey := fmt.Sprintf("router/backend/%s/sni", backendName)
-			addrKey := fmt.Sprintf("router/backend/%s/addr", backendName)
-			//fmt.Println("sni key: ", sniKey)
-			//fmt.Println("addr key: ", addrKey)
-
-			backendSNI, err := s.DbStore.Get(sniKey, nil)
+			tcpService := &TCPService{}
+			err = json.Unmarshal(backendPair.Value, tcpService)
 			if err != nil {
-				fmt.Println("ERR SNI: ", err)
-				continue
+				fmt.Println("invalid service content.")
 			}
-			fmt.Println(string(backendSNI.Value), err)
-
-			backendAddr, err := s.DbStore.Get(addrKey, nil)
-			if err != nil {
-				fmt.Println("ERR backendAddr: ", backendAddr)
-				continue
-			}
-			fmt.Println("*****backendAddr: ", backendAddr.Value)
-			parts := strings.Split(string(backendAddr.Value), ":")
+			fmt.Println(tcpService)
+			//backendName := tcpService.Name
+			backendSNI := tcpService.SNI
+			backendAddr := tcpService.Addr
+			parts := strings.Split(string(backendAddr), ":")
 			addr, portStr := parts[0], parts[1]
 			port, err := strconv.Atoi(portStr)
 			if err != nil {
 				continue
 			}
-			s.RegisterBackend(string(backendSNI.Value), addr, port)
+			s.RegisterBackend(backendSNI, addr, port)
 
 		}
-		time.Sleep(time.Second * 30)
+		time.Sleep(time.Duration(routerConfig.Server.DbBackend.Refresh)*time.Second)
 	}
 
 }

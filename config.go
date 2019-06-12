@@ -20,6 +20,7 @@ type DbBackendConfig struct {
 	Username string `toml:"username"`
 	Password string `toml:"password"`
 	Token string `toml:"token"`
+	Refresh uint `toml:"refresh"`
 	//Bucket string `toml:"bucket"`
 
 }

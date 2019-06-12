@@ -8,3 +8,4 @@ username = "auser2"
 password = "apassword2"
 addr     = "127.0.0.1"
 port     = 6379
+refresh  = 5
