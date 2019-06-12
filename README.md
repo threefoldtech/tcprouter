@@ -59,6 +59,42 @@ in `server.dbbackend` we define the backend kv store and its connection informat
 
 
 
+## Data representation in KV
+
+```
+127.0.0.1:6379> KEYS *
+1) "/tcprouter/services/bing"
+2) "/tcprouter/services/google"
+3) "/tcprouter/services/facebook"
+
+127.0.0.1:6379> get /tcprouter/services/google
+"{\"Key\":\"tcprouter/services/google\",\"Value\":\"eyJhZGRyIjoiMTcyLjIxNy4xOS40Njo0NDMiLCJzbmkiOiJ3d3cuZ29vZ2xlLmNvbSJ9\",\"LastIndex\":75292246}"
+
+```
+
+### Decoding data from python
+
+```ipython
+
+In [64]: res = r.get("/tcprouter/service/google")     
+
+In [65]: decoded = json.loads(res)                    
+
+In [66]: decoded                                      
+Out[66]: 
+{'Key': '/tcprouter/service/google',
+ 'Value': 'eyJhZGRyIjogIjE3Mi4yMTcuMTkuNDY6NDQzIiwgInNuaSI6ICJ3d3cuZ29vZ2xlLmNvbSIsICJuYW1lIjogImdvb2dsZSJ9'}
+
+
+```
+`Value` payload is base64 encoded because of how golang is marshaling.
+
+```ipython
+In [67]: base64.b64decode(decoded['Value'])           
+Out[67]: b'{"addr": "172.217.19.46:443", "sni": "www.google.com", "name": "google"}'
+
+```
+
 ## Examples
 
 ### Go
@@ -115,6 +151,9 @@ func main() {
 
 ```
 
+
+
+
 ### Python
 ```python3
 import base64
@@ -139,36 +178,6 @@ create_service('bing', 'www.bing.com', '13.107.21.200:443')
 
 ```
 
-## Data representation in KV
-
-```
-127.0.0.1:6379> KEYS *
-1) "/tcprouter/services/bing"
-2) "/tcprouter/services/google"
-3) "/tcprouter/services/facebook"
-
-127.0.0.1:6379> get /tcprouter/services/google
-"{\"Key\":\"tcprouter/services/google\",\"Value\":\"eyJhZGRyIjoiMTcyLjIxNy4xOS40Njo0NDMiLCJzbmkiOiJ3d3cuZ29vZ2xlLmNvbSJ9\",\"LastIndex\":75292246}"
-
-```
-
-### Decoding data from python
-
-```ipython
-
-In [64]: res = r.get("/tcprouter/service/google")     
-
-In [65]: decoded = json.loads(res)                    
-
-In [66]: decoded                                      
-Out[66]: 
-{'Key': '/tcprouter/service/google',
- 'Value': 'eyJhZGRyIjogIjE3Mi4yMTcuMTkuNDY6NDQzIiwgInNuaSI6ICJ3d3cuZ29vZ2xlLmNvbSIsICJuYW1lIjogImdvb2dsZSJ9'}
-
-In [67]: base64.b64decode(decoded['Value'])           
-Out[67]: b'{"addr": "172.217.19.46:443", "sni": "www.google.com", "name": "google"}'
-
-```
 
 If you want to test that locally you can modify `/etc/hosts`
 
