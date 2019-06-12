@@ -35,21 +35,29 @@ Please notice if you are using low numbered port like 80 or 443 you can use sudo
 
 
 
-```go
+### router.toml
+We have two toml sections so far
 
-	google := &Service{Addr:"172.217.19.46:443", SNI:"www.google.com", Name:"google"}
-	encGoogle, _ := json.Marshal(google)
-	bing := &Service{Addr:"13.107.21.200:443", SNI:"www.bing.com", Name:"bing"}
-	encBing, _ := json.Marshal(bing)
+#### [server]
 
-	kv.Put("tcprouter/service/google", encGoogle, nil)
-	kv.Put("tcprouter/service/bing", encBing, nil)
-
+```toml
+[server]
+addr = "0.0.0.0"
+port = 443
 ```
+in `[server]` section we define the listening interface/port the tcprouter intercepting: typically that's 443 for TLS connections.
+
+#### [server.dbbackend]
+```toml
+[server.dbbackend]
+type 	 = "redis"
+addr     = "127.0.0.1"
+port     = 6379
+refresh  = 10
+```
+in `server.dbbackend` we define the backend kv store and its connection information `addr,port` and how often we want to reload the data from the kv store using `refresh` key in seconds.
 
 
-
-For every backend we are proxying to you need to define some keys
 
 ## Examples
 
