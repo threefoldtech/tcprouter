@@ -1,6 +1,6 @@
 # tcprouter
 
-a down to earth tcp router based on traefik tcp streaming and supports multiple backends using [valkyrie](github.com/abronan/valkeyrie)
+a down to earth tcp router based on traefik tcp streaming and supports multiple backends using [valkyrie](https://github.com/abronan/valkeyrie)
 
 
 ## example
