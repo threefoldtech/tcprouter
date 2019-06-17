@@ -198,3 +198,9 @@ If you want to test that locally you can modify `/etc/hosts`
 
 ```
 So your browser go to your `127.0.0.1:443` on requesting google or bing.
+
+
+## CATCH_ALL
+to add a global `catch all` service
+
+`python3 create_service.py CATCH_ALL 'CATCH_ALL' '127.0.0.1:9092'`
