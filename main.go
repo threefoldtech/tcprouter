@@ -97,20 +97,17 @@ func NewServer(forwardOptions ServerOptions) *Server {
 func (s *Server) RegisterBackend(name, remoteAddr string, port int) {
 	fmt.Println("register ", name, remoteAddr, port)
 	s.backendM.Lock()
+	defer s.backendM.Unlock()
 	s.Backends[name] = Backend{Addr: remoteAddr, Port: port}
-	s.backendM.Unlock()
 }
 
 func (s *Server) DeleteBackend(name string) {
 	s.backendM.Lock()
+	defer s.backendM.Unlock()
 	delete(s.Backends, name)
-	s.backendM.Unlock()
-
 }
 func (s *Server) monitorDbForBackends() {
-
 	for {
-
 		backendPairs, err := s.DbStore.List("tcprouter/service/", nil)
 		// fmt.fmt.Println("backendPairs", backendPairs, " err: ", err)
 		fmt.Println(err)
@@ -172,6 +169,7 @@ func (s *Server) handleConnection(mainconn net.Conn) error {
 	serverName = strings.ToLower(serverName)
 
 	s.backendM.Lock()
+	defer s.backendM.Unlock()
 	backend, exists := s.Backends[serverName]
 	// fmt.Println("serverName:", serverName, "exists: ", exists, " backend: ", backend)
 	if exists == false {
@@ -180,14 +178,12 @@ func (s *Server) handleConnection(mainconn net.Conn) error {
 		// fmt.Println("serverName:", serverName, "exists: ", exists, "backend: ", backend)
 
 		if exists == false {
-			s.backendM.Unlock()
 			return fmt.Errorf("backend doesn't exist: %s and no 'CATCH_ALL' backend for request.", backend)
 
 		} else {
 			fmt.Println("using global CATCH_ALL backend.")
 		}
 	}
-	s.backendM.Unlock()
 	// remoteAddr := fmt.Sprintf("%s:%d",s.ServerOptions.remoteAddr,  s.ServerOptions.remotePort)
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP(backend.Addr), Port: backend.Port}
 	fmt.Println("found backend: ", remoteAddr)
