@@ -16,6 +16,9 @@ import (
 	"sync"
 	"time"
 
+	"net/http"
+	"net/url"
+
 	"github.com/abronan/valkeyrie"
 	"github.com/abronan/valkeyrie/store"
 	"github.com/abronan/valkeyrie/store/redis"
@@ -136,13 +139,21 @@ func (s *Server) monitorDbForBackends() {
 	}
 
 }
+func redirectHttps(w http.ResponseWriter, r *http.Request) {
+	targetUrl := url.URL{Scheme: "https", Host: r.Host, Path: r.URL.Path, RawQuery: r.URL.RawQuery}
+	fmt.Println("redirecting to ", targetUrl)
+	http.Redirect(w, r, targetUrl.RequestURI(), http.StatusPermanentRedirect)
+}
 
 func (s *Server) Start() {
 	go s.monitorDbForBackends()
 
-	var ln net.Listener
-	var err error
-	ln, err = net.Listen("tcp", fmt.Sprintf("%s:%d", s.ServerOptions.listeningAddr, s.ServerOptions.listeningPort))
+	if routerConfig.Server.RedirectToHttps == true {
+		fmt.Println("redirecting http traffic...")
+		go http.ListenAndServe(":80", http.HandlerFunc(redirectHttps))
+	}
+
+	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", s.ServerOptions.listeningAddr, s.ServerOptions.listeningPort))
 
 	if err != nil {
 		fmt.Println("err: ", err)

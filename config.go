@@ -2,35 +2,39 @@ package main
 
 import (
 	"fmt"
+
 	"github.com/BurntSushi/toml"
 )
+
 type tomlConfig struct {
 	Server ServerConfig `toml:"server"`
 }
 type ServerConfig struct {
-	Addr string `toml:"addr"`
-	Port uint	`toml:"port"`
-	DbBackend DbBackendConfig `toml:"dbbackend"`
+	Addr            string          `toml:"addr"`
+	Port            uint            `toml:"port"`
+	RedirectToHttps bool            `toml:"redirectToHttps"`
+	DbBackend       DbBackendConfig `toml:"dbbackend"`
 }
 
 type DbBackendConfig struct {
-	DbType string `toml:"type"`
-	Addr string `toml:"addr"`
-	Port uint   `toml:"port"`
+	DbType   string `toml:"type"`
+	Addr     string `toml:"addr"`
+	Port     uint   `toml:"port"`
 	Username string `toml:"username"`
 	Password string `toml:"password"`
-	Token string `toml:"token"`
-	Refresh uint `toml:"refresh"`
+	Token    string `toml:"token"`
+	Refresh  uint   `toml:"refresh"`
 	//Bucket string `toml:"bucket"`
 
 }
-func ParseCfg(cfg string) (tomlConfig, error){
+
+func ParseCfg(cfg string) (tomlConfig, error) {
 	var conf tomlConfig
 
 	if _, err := toml.Decode(cfg, &conf); err != nil {
 		fmt.Println("couldnt parse, err: ", err)
 		return conf, err
-	} else{
+	} else {
 
 		fmt.Println("parsed.")
 		fmt.Println("Server: ", conf.Server)
