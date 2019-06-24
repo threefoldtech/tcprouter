@@ -10,3 +10,13 @@ password = "apassword2"
 addr     = "127.0.0.1"
 port     = 6379
 refresh  = 5
+
+
+[server.services]
+    [server.services.python]
+        sni = "www.python.org"
+        addr = "45.55.99.72:443"
+
+    [server.services.ruby]
+        sni = "www.ruby-lang.org"
+        addr = "151.101.1.178:443"

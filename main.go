@@ -109,6 +109,26 @@ func (s *Server) DeleteBackend(name string) {
 	defer s.backendM.Unlock()
 	delete(s.Backends, name)
 }
+
+func addrAndPortFromString(s string) (string, int) {
+	var defaultPort int = 443
+	parts := strings.Split(string(s), ":")
+	var host string
+	var port = defaultPort
+	if len(parts) != 2 {
+		port = defaultPort
+		host = s
+		return host, port
+	} else {
+		host, portStr := parts[0], parts[1]
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			return host, defaultPort
+		}
+		return host, port
+	}
+}
+
 func (s *Server) monitorDbForBackends() {
 	for {
 		backendPairs, err := s.DbStore.List("tcprouter/service/", nil)
@@ -125,9 +145,7 @@ func (s *Server) monitorDbForBackends() {
 			//backendName := tcpService.Name
 			backendSNI := tcpService.SNI
 			backendAddr := tcpService.Addr
-			parts := strings.Split(string(backendAddr), ":")
-			addr, portStr := parts[0], parts[1]
-			port, err := strconv.Atoi(portStr)
+			addr, port := addrAndPortFromString(backendAddr)
 			if err != nil {
 				continue
 			}
@@ -145,7 +163,23 @@ func redirectHttps(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, targetUrl.RequestURI(), http.StatusPermanentRedirect)
 }
 
+func (s *Server) RegisterBackendsFromConfig() {
+	for _, service := range routerConfig.Server.Services {
+		serviceAddr := service.Addr
+		serviceSNI := service.SNI
+		addr, port := addrAndPortFromString(serviceAddr)
+
+		s.RegisterBackend(serviceSNI, addr, port)
+	}
+}
+
+func (s *Server) monitorServerConfigFile() {
+
+}
+
 func (s *Server) Start() {
+	s.RegisterBackendsFromConfig()
+	go s.monitorServerConfigFile()
 	go s.monitorDbForBackends()
 
 	if routerConfig.Server.RedirectToHttps == true {
@@ -180,9 +214,10 @@ func (s *Server) handleConnection(mainconn net.Conn) error {
 	serverName = strings.ToLower(serverName)
 
 	s.backendM.Lock()
-	defer s.backendM.Unlock()
 	backend, exists := s.Backends[serverName]
-	// fmt.Println("serverName:", serverName, "exists: ", exists, " backend: ", backend)
+	s.backendM.Unlock()
+
+	fmt.Println("serverName:", serverName, "exists: ", exists, " backend: ", backend)
 	if exists == false {
 		backend, exists = s.Backends["CATCH_ALL"]
 		fmt.Println("using global CATCH_ALL")
