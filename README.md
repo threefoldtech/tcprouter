@@ -55,6 +55,16 @@ port = 443
 ```
 in `[server]` section we define the listening interface/port the tcprouter intercepting: typically that's 443 for TLS connections.
 
+##### redirectToHttps
+to redirect Http traffic on `80` to `443`
+
+```toml
+[server]
+addr = "0.0.0.0"
+port = 443
+redirectToHttps = true
+```
+
 #### [server.dbbackend]
 ```toml
 [server.dbbackend]
