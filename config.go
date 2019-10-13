@@ -10,15 +10,16 @@ type tomlConfig struct {
 	Server ServerConfig `toml:"server"`
 }
 type ServerConfig struct {
-	Addr            string             `toml:"addr"`
-	Port            uint               `toml:"port"`
-	RedirectToHttps bool               `toml:"redirectToHttps"`
-	DbBackend       DbBackendConfig    `toml:"dbbackend"`
-	Services        map[string]Service `toml:"services"`
+	Addr      string             `toml:"addr"`
+	Port      uint               `toml:"port"`
+	HttpPort  uint               `toml:"port"`
+	DbBackend DbBackendConfig    `toml:"dbbackend"`
+	Services  map[string]Service `toml:"services"`
 }
 type Service struct {
-	SNI  string `toml:"sni"`
-	Addr string `toml:"addr"`
+	Addr     string `toml:"addr"`
+	TlsPort  int    `toml:"tlsport"`
+	HttpPort int    `toml:"httpport"`
 }
 
 type DbBackendConfig struct {

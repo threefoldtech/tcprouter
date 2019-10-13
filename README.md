@@ -1,6 +1,6 @@
 # tcprouter
 
-a down to earth tcp router based on traefik tcp streaming and supports multiple backends using [valkyrie](https://github.com/abronan/valkeyrie)
+A down to earth tcp router based on traefik tcp streaming and supports multiple backends using [valkyrie](https://github.com/abronan/valkeyrie)
 
 
 ## Build
@@ -26,6 +26,7 @@ configfile: router.toml
 [server]
 addr = "0.0.0.0"
 port = 443
+httpport = 80
 
 [server.dbbackend]
 type 	 = "redis"
@@ -52,18 +53,10 @@ We have two toml sections so far
 [server]
 addr = "0.0.0.0"
 port = 443
+httpport = 80
 ```
 in `[server]` section we define the listening interface/port the tcprouter intercepting: typically that's 443 for TLS connections.
 
-##### redirectToHttps
-to redirect Http traffic on `80` to `443`
-
-```toml
-[server]
-addr = "0.0.0.0"
-port = 443
-redirectToHttps = true
-```
 
 #### [server.dbbackend]
 ```toml
