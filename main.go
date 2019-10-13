@@ -8,6 +8,7 @@ import (
 
 	//"github.com/abronan/valkeyrie/store/boltdb"
 	//"github.com/abronan/valkeyrie/store/etcd/v2"
+	"flag"
 	"log"
 	"net"
 	"os"
@@ -38,17 +39,14 @@ var validBackends = map[string]store.Backend{
 var routerConfig tomlConfig
 
 type TCPService struct {
-	Name string `json:"name"`
 	Addr string `json:"addr"`
 	SNI  string `json:"sni"`
 }
 
 func init() {
-	if len(os.Args) != 2 {
-		fmt.Println("need to pass config file.")
-		os.Exit(4)
-	}
-	configFilePath := os.Args[1]
+	var configFilePath string
+	flag.StringVar(&configFilePath, "config", "", "Configuration file path")
+	flag.Parse()
 	fmt.Println("reading config from : ", configFilePath)
 	bytes, err := ioutil.ReadFile(configFilePath)
 	if err != nil {
@@ -64,7 +62,6 @@ func init() {
 	if err != nil {
 		fmt.Println("invalid toml. cfg: ", cfg)
 		os.Exit(2)
-
 	}
 
 	_, exists := validBackends[c.Server.DbBackend.DbType]
@@ -110,53 +107,44 @@ func (s *Server) DeleteBackend(name string) {
 	delete(s.Backends, name)
 }
 
-func addrAndPortFromString(s string) (string, int) {
+func addrAndPortFromString(s string, backend *Backend) {
 	var defaultPort int = 443
 	parts := strings.Split(string(s), ":")
-	var host string
-	var port = defaultPort
 	if len(parts) != 2 {
-		port = defaultPort
-		host = s
-		return host, port
+		backend.Port = defaultPort
+		backend.Addr = s
+		return
 	} else {
 		host, portStr := parts[0], parts[1]
 		port, err := strconv.Atoi(portStr)
 		if err != nil {
-			return host, defaultPort
+			backend.Port = defaultPort
+		} else {
+			backend.Port = port
 		}
-		return host, port
+		backend.Addr = host
 	}
 }
 
-func (s *Server) monitorDbForBackends() {
-	for {
-		backendPairs, err := s.DbStore.List("tcprouter/service/", nil)
-		// fmt.fmt.Println("backendPairs", backendPairs, " err: ", err)
-		fmt.Println(err)
-		fmt.Println(len(backendPairs))
-		for _, backendPair := range backendPairs {
-			tcpService := &TCPService{}
-			err = json.Unmarshal(backendPair.Value, tcpService)
-			if err != nil {
-				fmt.Println("invalid service content.")
-			}
-			fmt.Println(tcpService)
-			//backendName := tcpService.Name
-			backendSNI := tcpService.SNI
-			backendAddr := tcpService.Addr
-			addr, port := addrAndPortFromString(backendAddr)
-			if err != nil {
-				continue
-			}
-			s.RegisterBackend(backendSNI, addr, port)
-
-		}
-		fmt.Println("BACKENDS: ", s.Backends)
-		time.Sleep(time.Duration(routerConfig.Server.DbBackend.Refresh) * time.Second)
+func (s *Server) getSNI(sni string, backend *Backend) error {
+	key := fmt.Sprintf("tcprouter/service/%s", sni)
+	backendPair, err := s.DbStore.Get(key, nil)
+	if err != nil {
+		fmt.Println("sni not found", key, err)
+		return fmt.Errorf("sni not found")
 	}
-
+	tcpService := &TCPService{}
+	err = json.Unmarshal(backendPair.Value, tcpService)
+	if err != nil {
+		fmt.Println("invalid service content.")
+		return fmt.Errorf("Invalid service content")
+	}
+	fmt.Println(tcpService)
+	backendAddr := tcpService.Addr
+	addrAndPortFromString(backendAddr, backend)
+	return nil
 }
+
 func redirectHttps(w http.ResponseWriter, r *http.Request) {
 	targetUrl := url.URL{Scheme: "https", Host: r.Host, Path: r.URL.Path, RawQuery: r.URL.RawQuery}
 	fmt.Println("redirecting to ", targetUrl)
@@ -167,9 +155,9 @@ func (s *Server) RegisterBackendsFromConfig() {
 	for _, service := range routerConfig.Server.Services {
 		serviceAddr := service.Addr
 		serviceSNI := service.SNI
-		addr, port := addrAndPortFromString(serviceAddr)
-
-		s.RegisterBackend(serviceSNI, addr, port)
+		backend := Backend{}
+		addrAndPortFromString(serviceAddr, &backend)
+		s.RegisterBackend(serviceSNI, backend.Addr, backend.Port)
 	}
 }
 
@@ -180,7 +168,6 @@ func (s *Server) monitorServerConfigFile() {
 func (s *Server) Start() {
 	s.RegisterBackendsFromConfig()
 	go s.monitorServerConfigFile()
-	go s.monitorDbForBackends()
 
 	if routerConfig.Server.RedirectToHttps == true {
 		fmt.Println("redirecting http traffic...")
@@ -213,9 +200,13 @@ func (s *Server) handleConnection(mainconn net.Conn) error {
 	conn := GetConn(mainconn, peeked)
 	serverName = strings.ToLower(serverName)
 
-	s.backendM.Lock()
 	backend, exists := s.Backends[serverName]
-	s.backendM.Unlock()
+	if exists == false {
+		// try to load it from db backend
+		backend = Backend{}
+		err := s.getSNI(serverName, &backend)
+		exists = err == nil
+	}
 
 	fmt.Println("serverName:", serverName, "exists: ", exists, " backend: ", backend)
 	if exists == false {
