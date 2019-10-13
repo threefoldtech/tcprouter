@@ -145,12 +145,6 @@ func (s *Server) getSNI(sni string, backend *Backend) error {
 	return nil
 }
 
-func redirectHttps(w http.ResponseWriter, r *http.Request) {
-	targetUrl := url.URL{Scheme: "https", Host: r.Host, Path: r.URL.Path, RawQuery: r.URL.RawQuery}
-	fmt.Println("redirecting to ", targetUrl)
-	http.Redirect(w, r, targetUrl.RequestURI(), http.StatusPermanentRedirect)
-}
-
 func (s *Server) RegisterBackendsFromConfig() {
 	for _, service := range routerConfig.Server.Services {
 		serviceAddr := service.Addr
@@ -165,13 +159,33 @@ func (s *Server) monitorServerConfigFile() {
 
 }
 
+func (s *Server) serveHTTP() {
+	ln, err := net.Listen("tcp", fmt.Sprintf("%s:80", s.ServerOptions.listeningAddr))
+
+	if err != nil {
+		fmt.Println("err: ", err)
+		// handle error
+	}
+
+	fmt.Println("started http server..")
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			fmt.Println("err")
+			// handle error
+		}
+		go s.handleHTTPConnection(conn)
+	}
+
+}
+
 func (s *Server) Start() {
 	s.RegisterBackendsFromConfig()
 	go s.monitorServerConfigFile()
 
 	if routerConfig.Server.RedirectToHttps == true {
 		fmt.Println("redirecting http traffic...")
-		go http.ListenAndServe(":80", http.HandlerFunc(redirectHttps))
+		go s.serveHTTP()
 	}
 
 	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", s.ServerOptions.listeningAddr, s.ServerOptions.listeningPort))
@@ -196,12 +210,41 @@ func (s *Server) handleConnection(mainconn net.Conn) error {
 	br := bufio.NewReader(mainconn)
 	serverName, isTls, peeked := clientHelloServerName(br)
 	fmt.Println("** SERVER NAME: SNI ", serverName, " isTLS: ", isTls)
+	return s.forward(mainconn, serverName, peeked)
+}
 
+func (s *Server) handleHTTPConnection(mainconn net.Conn) error {
+	br := bufio.NewReader(mainconn)
+	peeked := ""
+	serverName := ""
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			return err
+		}
+		peeked = peeked + line
+		if strings.HasPrefix(line, "Host:") {
+			serverName = strings.Trim(line[6:], " \n\r")
+		}
+		if strings.Trim(line, " \n\r") == "" {
+			break
+		}
+
+	}
+	if serverName == "" {
+		return fmt.Errorf("Could not find host")
+	}
+	fmt.Printf("** HOST NAME: '%s'\n", serverName)
+	return s.forward(mainconn, serverName, peeked)
+}
+
+func (s *Server) forward(mainconn net.Conn, serverName string, peeked string) error {
 	conn := GetConn(mainconn, peeked)
 	serverName = strings.ToLower(serverName)
 
 	backend, exists := s.Backends[serverName]
 	if exists == false {
+		fmt.Println("not found in file config")
 		// try to load it from db backend
 		backend = Backend{}
 		err := s.getSNI(serverName, &backend)

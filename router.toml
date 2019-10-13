@@ -20,3 +20,7 @@ refresh  = 5
     [server.services.ruby]
         sni = "www.ruby-lang.org"
         addr = "151.101.1.178:443"
+
+    [server.services.localtest]
+        sni = "myserver.local"
+        addr = "127.0.0.1:8000"
