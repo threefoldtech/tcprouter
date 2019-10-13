@@ -1,22 +1,26 @@
 [server]
 addr = "0.0.0.0"
 port = 443
-redirectToHttps = true
+httpport = 80
 
 [server.dbbackend]
 type 	 = "redis"
-username = "auser2"
-password = "apassword2"
+username = ""
+password = ""
 addr     = "127.0.0.1"
 port     = 6379
 refresh  = 5
 
 
 [server.services]
-    [server.services.python]
-        sni = "www.python.org"
-        addr = "45.55.99.72:443"
+    [server.services."www.python.org"]
+        addr = "151.101.240.223"
+        tlsport = 443
 
-    [server.services.ruby]
-        sni = "www.ruby-lang.org"
-        addr = "151.101.1.178:443"
+    [server.services."www.raby-lang.org"]
+        addr = "151.101.1.178"
+        tlsport = 443
+
+    [server.services."myserver.local"]
+        addr = "127.0.0.1"
+        httpport = 8000

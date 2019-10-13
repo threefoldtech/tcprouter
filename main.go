@@ -8,16 +8,13 @@ import (
 
 	//"github.com/abronan/valkeyrie/store/boltdb"
 	//"github.com/abronan/valkeyrie/store/etcd/v2"
+	"flag"
 	"log"
 	"net"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"net/http"
-	"net/url"
 
 	"github.com/abronan/valkeyrie"
 	"github.com/abronan/valkeyrie/store"
@@ -37,18 +34,10 @@ var validBackends = map[string]store.Backend{
 }
 var routerConfig tomlConfig
 
-type TCPService struct {
-	Name string `json:"name"`
-	Addr string `json:"addr"`
-	SNI  string `json:"sni"`
-}
-
 func init() {
-	if len(os.Args) != 2 {
-		fmt.Println("need to pass config file.")
-		os.Exit(4)
-	}
-	configFilePath := os.Args[1]
+	var configFilePath string
+	flag.StringVar(&configFilePath, "config", "", "Configuration file path")
+	flag.Parse()
 	fmt.Println("reading config from : ", configFilePath)
 	bytes, err := ioutil.ReadFile(configFilePath)
 	if err != nil {
@@ -64,7 +53,6 @@ func init() {
 	if err != nil {
 		fmt.Println("invalid toml. cfg: ", cfg)
 		os.Exit(2)
-
 	}
 
 	_, exists := validBackends[c.Server.DbBackend.DbType]
@@ -76,20 +64,16 @@ func init() {
 	fmt.Println("routerConfig: ", routerConfig)
 }
 
-type Backend struct {
-	Addr string
-	Port int
-}
-
 type ServerOptions struct {
-	listeningAddr string
-	listeningPort uint
+	listeningAddr     string
+	listeningTlsPort  uint
+	listeningHttpPort uint
 }
 
 type Server struct {
 	ServerOptions ServerOptions
 	DbStore       store.Store
-	Backends      map[string]Backend
+	Services      map[string]Service
 	backendM      sync.RWMutex
 }
 
@@ -97,79 +81,38 @@ func NewServer(forwardOptions ServerOptions) *Server {
 	return &Server{ServerOptions: forwardOptions}
 }
 
-func (s *Server) RegisterBackend(name, remoteAddr string, port int) {
-	fmt.Println("register ", name, remoteAddr, port)
+func (s *Server) RegisterService(name, remoteAddr string, tlsport int, httpport int) {
+	fmt.Println("register ", name, remoteAddr, tlsport, httpport)
 	s.backendM.Lock()
 	defer s.backendM.Unlock()
-	s.Backends[name] = Backend{Addr: remoteAddr, Port: port}
+	s.Services[name] = Service{Addr: remoteAddr, TlsPort: tlsport, HttpPort: httpport}
 }
 
-func (s *Server) DeleteBackend(name string) {
+func (s *Server) DeleteService(name string) {
 	s.backendM.Lock()
 	defer s.backendM.Unlock()
-	delete(s.Backends, name)
+	delete(s.Services, name)
 }
 
-func addrAndPortFromString(s string) (string, int) {
-	var defaultPort int = 443
-	parts := strings.Split(string(s), ":")
-	var host string
-	var port = defaultPort
-	if len(parts) != 2 {
-		port = defaultPort
-		host = s
-		return host, port
-	} else {
-		host, portStr := parts[0], parts[1]
-		port, err := strconv.Atoi(portStr)
-		if err != nil {
-			return host, defaultPort
-		}
-		return host, port
+func (s *Server) getHost(host string, service *Service) error {
+	key := fmt.Sprintf("tcprouter/service/%s", host)
+	servicePair, err := s.DbStore.Get(key, nil)
+	if err != nil {
+		fmt.Println("host not found", key, err)
+		return fmt.Errorf("host not found")
 	}
-}
-
-func (s *Server) monitorDbForBackends() {
-	for {
-		backendPairs, err := s.DbStore.List("tcprouter/service/", nil)
-		// fmt.fmt.Println("backendPairs", backendPairs, " err: ", err)
-		fmt.Println(err)
-		fmt.Println(len(backendPairs))
-		for _, backendPair := range backendPairs {
-			tcpService := &TCPService{}
-			err = json.Unmarshal(backendPair.Value, tcpService)
-			if err != nil {
-				fmt.Println("invalid service content.")
-			}
-			fmt.Println(tcpService)
-			//backendName := tcpService.Name
-			backendSNI := tcpService.SNI
-			backendAddr := tcpService.Addr
-			addr, port := addrAndPortFromString(backendAddr)
-			if err != nil {
-				continue
-			}
-			s.RegisterBackend(backendSNI, addr, port)
-
-		}
-		fmt.Println("BACKENDS: ", s.Backends)
-		time.Sleep(time.Duration(routerConfig.Server.DbBackend.Refresh) * time.Second)
+	err = json.Unmarshal(servicePair.Value, service)
+	if err != nil {
+		fmt.Println("invalid service content.")
+		return fmt.Errorf("Invalid service content")
 	}
-
-}
-func redirectHttps(w http.ResponseWriter, r *http.Request) {
-	targetUrl := url.URL{Scheme: "https", Host: r.Host, Path: r.URL.Path, RawQuery: r.URL.RawQuery}
-	fmt.Println("redirecting to ", targetUrl)
-	http.Redirect(w, r, targetUrl.RequestURI(), http.StatusPermanentRedirect)
+	fmt.Println(service)
+	return nil
 }
 
-func (s *Server) RegisterBackendsFromConfig() {
-	for _, service := range routerConfig.Server.Services {
-		serviceAddr := service.Addr
-		serviceSNI := service.SNI
-		addr, port := addrAndPortFromString(serviceAddr)
-
-		s.RegisterBackend(serviceSNI, addr, port)
+func (s *Server) RegisterServicesFromConfig() {
+	for key, service := range routerConfig.Server.Services {
+		s.RegisterService(key, service.Addr, service.TlsPort, service.HttpPort)
 	}
 }
 
@@ -177,17 +120,32 @@ func (s *Server) monitorServerConfigFile() {
 
 }
 
-func (s *Server) Start() {
-	s.RegisterBackendsFromConfig()
-	go s.monitorServerConfigFile()
-	go s.monitorDbForBackends()
+func (s *Server) serveHTTP() {
+	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", s.ServerOptions.listeningAddr, s.ServerOptions.listeningHttpPort))
 
-	if routerConfig.Server.RedirectToHttps == true {
-		fmt.Println("redirecting http traffic...")
-		go http.ListenAndServe(":80", http.HandlerFunc(redirectHttps))
+	if err != nil {
+		fmt.Println("err: ", err)
+		// handle error
 	}
 
-	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", s.ServerOptions.listeningAddr, s.ServerOptions.listeningPort))
+	fmt.Println("started http server..")
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			fmt.Println("err")
+			// handle error
+		}
+		go s.handleHTTPConnection(conn)
+	}
+
+}
+
+func (s *Server) Start() {
+	s.RegisterServicesFromConfig()
+	go s.monitorServerConfigFile()
+	go s.serveHTTP()
+
+	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", s.ServerOptions.listeningAddr, s.ServerOptions.listeningTlsPort))
 
 	if err != nil {
 		fmt.Println("err: ", err)
@@ -209,45 +167,86 @@ func (s *Server) handleConnection(mainconn net.Conn) error {
 	br := bufio.NewReader(mainconn)
 	serverName, isTls, peeked := clientHelloServerName(br)
 	fmt.Println("** SERVER NAME: SNI ", serverName, " isTLS: ", isTls)
+	return s.handleService(mainconn, serverName, peeked, isTls)
+}
 
-	conn := GetConn(mainconn, peeked)
+func (s *Server) handleHTTPConnection(mainconn net.Conn) error {
+	br := bufio.NewReader(mainconn)
+	peeked := ""
+	serverName := ""
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			return err
+		}
+		peeked = peeked + line
+		if strings.HasPrefix(line, "Host:") {
+			serverName = strings.Trim(line[6:], " \n\r")
+		}
+		if strings.Trim(line, " \n\r") == "" {
+			break
+		}
+
+	}
+	if serverName == "" {
+		return fmt.Errorf("Could not find host")
+	}
+	fmt.Printf("** HOST NAME: '%s'\n", serverName)
+	return s.handleService(mainconn, serverName, peeked, false)
+}
+
+func (s *Server) handleService(mainconn net.Conn, serverName, peeked string, isTls bool) error {
 	serverName = strings.ToLower(serverName)
-
-	s.backendM.Lock()
-	backend, exists := s.Backends[serverName]
-	s.backendM.Unlock()
-
-	fmt.Println("serverName:", serverName, "exists: ", exists, " backend: ", backend)
+	service, exists := s.Services[serverName]
 	if exists == false {
-		backend, exists = s.Backends["CATCH_ALL"]
+		fmt.Println("not found in file config")
+		// try to load it from db backend
+		service = Service{}
+		err := s.getHost(serverName, &service)
+		exists = err == nil
+	}
+
+	fmt.Println("serverName:", serverName, "exists: ", exists, " service: ", service)
+	if exists == false {
+		service, exists = s.Services["CATCH_ALL"]
 		fmt.Println("using global CATCH_ALL")
-		// fmt.Println("serverName:", serverName, "exists: ", exists, "backend: ", backend)
 
 		if exists == false {
-			return fmt.Errorf("backend doesn't exist: %s and no 'CATCH_ALL' backend for request.", backend)
+			return fmt.Errorf("service doesn't exist: %s and no 'CATCH_ALL' service for request.", service)
 
 		} else {
-			fmt.Println("using global CATCH_ALL backend.")
+			fmt.Println("using global CATCH_ALL service.")
 		}
 	}
-	// remoteAddr := fmt.Sprintf("%s:%d",s.ServerOptions.remoteAddr,  s.ServerOptions.remotePort)
-	remoteAddr := &net.TCPAddr{IP: net.ParseIP(backend.Addr), Port: backend.Port}
-	fmt.Println("found backend: ", remoteAddr)
-	fmt.Println("handling connection from ", conn.RemoteAddr())
+	var remotePort int
+	if isTls {
+		remotePort = service.TlsPort
+	} else {
+		remotePort = service.HttpPort
+	}
+	fmt.Println("found service: ", service)
+	fmt.Println("handling connection from ", mainconn.RemoteAddr())
+	conn := GetConn(mainconn, peeked)
+	return s.forward(conn, service.Addr, remotePort)
+
+}
+
+func (s *Server) forward(conn net.Conn, remoteAddr string, remotePort int) error {
+	remoteTCPAddr := &net.TCPAddr{IP: net.ParseIP(remoteAddr), Port: remotePort}
 	defer conn.Close()
 
-	connBackend, err := net.DialTCP("tcp", nil, remoteAddr)
+	connService, err := net.DialTCP("tcp", nil, remoteTCPAddr)
 	if err != nil {
-		fmt.Println("error while connection to backend: %v", err)
+		fmt.Println("error while connection to service: %v", err)
 		return err
 	} else {
-		fmt.Println("connected to the backend...")
+		fmt.Println("connected to the service...")
 	}
-	defer connBackend.Close()
+	defer connService.Close()
 
 	errChan := make(chan error, 1)
-	go connCopy(conn, connBackend, errChan)
-	go connCopy(connBackend, conn, errChan)
+	go connCopy(conn, connService, errChan)
+	go connCopy(connService, conn, errChan)
 
 	err = <-errChan
 	if err != nil {
@@ -272,10 +271,10 @@ func main() {
 		log.Fatal("Cannot create store redis", err)
 	}
 
-	serverOpts := ServerOptions{listeningAddr: routerConfig.Server.Addr, listeningPort: routerConfig.Server.Port}
+	serverOpts := ServerOptions{listeningAddr: routerConfig.Server.Addr, listeningTlsPort: routerConfig.Server.Port, listeningHttpPort: routerConfig.Server.HttpPort}
 	s := NewServer(serverOpts)
 	s.DbStore = kv
-	s.Backends = make(map[string]Backend)
+	s.Services = make(map[string]Service)
 
 	s.Start()
 
