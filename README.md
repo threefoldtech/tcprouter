@@ -33,6 +33,12 @@ type 	 = "redis"
 addr     = "127.0.0.1"
 port     = 6379
 refresh  = 10
+
+[server.services]
+    [server.services."www.google.com"]
+        addr = "172.217.19.46"
+        tlsport = 443
+        httpport = 80
 ```
 then 
 `./tcprouter router.toml`
@@ -74,12 +80,12 @@ in `server.dbbackend` we define the backend kv store and its connection informat
 
 ```
 127.0.0.1:6379> KEYS *
-1) "/tcprouter/services/bing"
-2) "/tcprouter/services/google"
-3) "/tcprouter/services/facebook"
+1) "/tcprouter/services/www.bing.com"
+2) "/tcprouter/services/www.google.com"
+3) "/tcprouter/services/www.facebook.com"
 
-127.0.0.1:6379> get /tcprouter/services/google
-"{\"Key\":\"tcprouter/services/google\",\"Value\":\"eyJhZGRyIjoiMTcyLjIxNy4xOS40Njo0NDMiLCJzbmkiOiJ3d3cuZ29vZ2xlLmNvbSJ9\",\"LastIndex\":75292246}"
+127.0.0.1:6379> get /tcprouter/services/www.google.com
+"{\"Key\":\"tcprouter/services/www.google.com\",\"Value\":\"eyJhZGRyIjogIjE3Mi4yMTcuMTkuNDYiLCAiaHR0cHBvcnQiIDgwLCAidGxzcG9ydCI6IDQ0M30=\",\"LastIndex\":75292246}"
 
 ```
 
@@ -87,14 +93,14 @@ in `server.dbbackend` we define the backend kv store and its connection informat
 
 ```ipython
 
-In [64]: res = r.get("/tcprouter/service/google")     
+In [64]: res = r.get("/tcprouter/service/www.google.com")
 
 In [65]: decoded = json.loads(res)                    
 
 In [66]: decoded                                      
 Out[66]: 
-{'Key': '/tcprouter/service/google',
- 'Value': 'eyJhZGRyIjogIjE3Mi4yMTcuMTkuNDY6NDQzIiwgInNuaSI6ICJ3d3cuZ29vZ2xlLmNvbSIsICJuYW1lIjogImdvb2dsZSJ9'}
+{'Key': '/tcprouter/service/www.google.com',
+ 'Value': 'eyJhZGRyIjogIjE3Mi4yMTcuMTkuNDYiLCAiaHR0cHBvcnQiIDgwLCAidGxzcG9ydCI6IDQ0M30='}
 
 
 ```
@@ -102,7 +108,7 @@ Out[66]:
 
 ```ipython
 In [67]: base64.b64decode(decoded['Value'])           
-Out[67]: b'{"addr": "172.217.19.46:443", "sni": "www.google.com", "name": "google"}'
+Out[67]: b'{"addr": "172.217.19.46", "httpport" 80, "tlsport": 443}'
 
 ```
 
