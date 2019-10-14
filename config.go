@@ -12,7 +12,7 @@ type tomlConfig struct {
 type ServerConfig struct {
 	Addr      string             `toml:"addr"`
 	Port      uint               `toml:"port"`
-	HttpPort  uint               `toml:"port"`
+	HttpPort  uint               `toml:"httpport"`
 	DbBackend DbBackendConfig    `toml:"dbbackend"`
 	Services  map[string]Service `toml:"services"`
 }
