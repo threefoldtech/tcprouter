@@ -10,6 +10,7 @@ import (
 )
 
 // Code extracted from traefik to get the servername from TLS connection.
+
 // GetConn creates a connection proxy with a peeked string
 func GetConn(conn net.Conn, peeked string) net.Conn {
 	conn = &Conn{
@@ -53,26 +54,25 @@ func clientHelloServerName(br *bufio.Reader) (string, bool, string) {
 	hdr, err := br.Peek(1)
 	if err != nil {
 		if err != io.EOF {
-			fmt.Println("Error while Peeking first byte: %s", err)
+			fmt.Printf("Error while Peeking first byte: %s", err)
 		}
 		return "", false, ""
 	}
 	const recordTypeHandshake = 0x16
 	if hdr[0] != recordTypeHandshake {
-		// log.Errorf("Error not tls")
 		return "", false, getPeeked(br) // Not TLS.
 	}
 
 	const recordHeaderLen = 5
 	hdr, err = br.Peek(recordHeaderLen)
 	if err != nil {
-		fmt.Println("Error while Peeking hello: %s", err)
+		fmt.Printf("Error while Peeking hello: %s\n", err)
 		return "", false, getPeeked(br)
 	}
 	recLen := int(hdr[3])<<8 | int(hdr[4]) // ignoring version in hdr[1:3]
 	helloBytes, err := br.Peek(recordHeaderLen + recLen)
 	if err != nil {
-		fmt.Println("Error while Hello: %s", err)
+		fmt.Printf("Error while Hello: %s\n", err)
 		return "", true, getPeeked(br)
 	}
 	sni := ""
@@ -89,7 +89,7 @@ func clientHelloServerName(br *bufio.Reader) (string, bool, string) {
 func getPeeked(br *bufio.Reader) string {
 	peeked, err := br.Peek(br.Buffered())
 	if err != nil {
-		fmt.Println("Could not get anything: %s", err)
+		fmt.Printf("Could not get anything: %s\n", err)
 		return ""
 	}
 	return string(peeked)
