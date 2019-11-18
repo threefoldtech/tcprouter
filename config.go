@@ -2,24 +2,32 @@ package main
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/BurntSushi/toml"
+	"github.com/abronan/valkeyrie/store"
 )
 
-type tomlConfig struct {
+type Config struct {
 	Server ServerConfig `toml:"server"`
 }
+
 type ServerConfig struct {
-	Addr      string             `toml:"addr"`
+	Host      string             `toml:"addr"`
 	Port      uint               `toml:"port"`
-	HttpPort  uint               `toml:"httpport"`
+	HTTPPort  uint               `toml:"httpport"`
 	DbBackend DbBackendConfig    `toml:"dbbackend"`
 	Services  map[string]Service `toml:"services"`
 }
+
+func (s ServerConfig) Addr() string {
+	return fmt.Sprintf("%s:%d", s.Host, s.Port)
+}
+
 type Service struct {
 	Addr     string `toml:"addr"`
-	TlsPort  int    `toml:"tlsport"`
-	HttpPort int    `toml:"httpport"`
+	TLSPort  int    `toml:"tlsport"`
+	HTTPPort int    `toml:"httpport"`
 }
 
 type DbBackendConfig struct {
@@ -31,20 +39,18 @@ type DbBackendConfig struct {
 	Token    string `toml:"token"`
 	Refresh  uint   `toml:"refresh"`
 	//Bucket string `toml:"bucket"`
-
 }
 
-func ParseCfg(cfg string) (tomlConfig, error) {
-	var conf tomlConfig
-
-	if _, err := toml.Decode(cfg, &conf); err != nil {
-		fmt.Println("couldnt parse, err: ", err)
-		return conf, err
-	} else {
-
-		fmt.Println("parsed.")
-		fmt.Println("Server: ", conf.Server)
-		return conf, nil
+func (b DbBackendConfig) Backend() store.Backend {
+	backend, ok := validBackends[b.DbType]
+	if !ok {
+		panic(fmt.Sprintf("unsupported backend type '%s'", b.DbType))
 	}
+	return backend
+}
 
+func ParseCfg(r io.Reader) (Config, error) {
+	var conf Config
+	_, err := toml.DecodeReader(r, &conf)
+	return conf, err
 }
