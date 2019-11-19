@@ -1,8 +1,8 @@
 server:
-	cd cmd/server && go build && cp server ../../tcprouterserver
+	cd cmd/server && go build && mv server ../../tcprouterserver
 
 client:
-	cd cmd/client && go build && cp client ../../tcprouterclient
+	cd cmd/client && go build && mv client ../../tcprouterclient
 
 all: server client
 
