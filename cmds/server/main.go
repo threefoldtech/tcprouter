@@ -13,6 +13,7 @@ import (
 	"github.com/abronan/valkeyrie"
 	"github.com/abronan/valkeyrie/store"
 	"github.com/abronan/valkeyrie/store/redis"
+	"github.com/xmonader/tcprouter"
 )
 
 var validBackends = map[string]store.Backend{
@@ -21,21 +22,21 @@ var validBackends = map[string]store.Backend{
 	"etcd":   store.ETCDV3,
 }
 
-func readConfig(path string) (Config, error) {
+func readConfig(path string) (tcprouter.Config, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		log.Fatalf("failed to open configuration file at %s: %v", path, err)
 	}
 	defer f.Close()
 
-	c, err := ParseCfg(f)
+	c, err := tcprouter.ParseCfg(f)
 	if err != nil {
 		return c, fmt.Errorf("failed to read configuration %w", err)
 	}
 	return c, nil
 }
 
-func initBackend(cfg Config) error {
+func initBackend(cfg tcprouter.Config) error {
 	redis.Register()
 
 	_, exists := validBackends[cfg.Server.DbBackend.DbType]
@@ -77,18 +78,19 @@ func main() {
 	}
 
 	backend := cfg.Server.DbBackend.Backend()
-	addr := cfg.Server.Addr()
+	addr := cfg.Server.DbBackend.Addr()
 	kv, err := initStore(backend, addr)
 	if err != nil {
 		log.Fatalf("Cannot create %s store: %v", backend, err)
 	}
 
-	serverOpts := ServerOptions{
-		listeningAddr:     cfg.Server.Host,
-		listeningTLSPort:  cfg.Server.Port,
-		listeningHTTPPort: cfg.Server.HTTPPort,
+	serverOpts := tcprouter.ServerOptions{
+		ListeningAddr:           cfg.Server.Host,
+		ListeningTLSPort:        cfg.Server.Port,
+		ListeningHTTPPort:       cfg.Server.HTTPPort,
+		ListeningForClientsPort: cfg.Server.ClientsPort,
 	}
-	s := NewServer(serverOpts, kv, cfg.Server.Services)
+	s := tcprouter.NewServer(serverOpts, kv, cfg.Server.Services)
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, os.Kill)

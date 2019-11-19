@@ -1,4 +1,4 @@
-package main
+package tcprouter
 
 import (
 	"bufio"
@@ -107,8 +107,3 @@ func (c sniSniffConn) Read(p []byte) (int, error) { return c.r.Read(p) }
 
 // Write crashes all the time
 func (sniSniffConn) Write(p []byte) (int, error) { return 0, io.EOF }
-
-func connCopy(dst, src net.Conn, errCh chan error) {
-	_, err := io.Copy(dst, src)
-	errCh <- err
-}

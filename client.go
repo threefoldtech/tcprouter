@@ -1,10 +1,11 @@
-package main
+package tcprouter
 
 import (
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"sync"
 )
 
 type client struct {
@@ -26,15 +27,11 @@ func NewClient(secret string) *client {
 
 func (c *client) Close() {
 	if c.RemoteConn != nil {
-		if err := c.RemoteConn.Close(); err != nil {
-			log.Printf("error closing remote connection to %s", c.RemoteConn.RemoteAddr().String())
-		}
+		c.RemoteConn.Close()
 	}
 
 	if c.LocalConn != nil {
-		if err := c.LocalConn.Close(); err != nil {
-			log.Printf("error closing local connection to %s", c.LocalConn.RemoteAddr().String())
-		}
+		c.LocalConn.Close()
 	}
 }
 
@@ -70,10 +67,9 @@ func (c *client) Handshake() error {
 	}
 
 	h := Handshake{
-		MagicNr: magicNr,
-		Secret:  [256]byte{},
+		MagicNr: MagicNr,
+		Secret:  []byte(c.secret),
 	}
-	copy(h.Secret[:], c.secret)
 	// at this point if the server refuse the hanshake it will
 	// just close the connection which should return an error
 	return h.Write(c.RemoteConn)
@@ -81,25 +77,28 @@ func (c *client) Handshake() error {
 
 func (c *client) Forward() error {
 
-	cErr := make(chan error)
-	go forward(c.LocalConn, c.RemoteConn, cErr)
-	go forward(c.RemoteConn, c.LocalConn, cErr)
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+
+	go forward(c.LocalConn, c.RemoteConn, &wg)
+	go forward(c.RemoteConn, c.LocalConn, &wg)
 
 	defer func() {
+		log.Println("close connections")
 		c.RemoteConn.Close()
 		c.LocalConn.Close()
-		close(cErr)
 	}()
 
-	err := <-cErr
-	if err != nil {
-		fmt.Printf("Error during connection: %v", err)
-		return err
-	}
+	wg.Wait()
 	return nil
 }
 
-func forward(dst io.Writer, src io.Reader, cErr chan<- error) {
-	_, err := io.Copy(dst, src)
-	cErr <- err
+func forward(dst, src net.Conn, wg *sync.WaitGroup) {
+	defer wg.Done()
+	io.Copy(dst, src)
+
+	dst.Close()
+	src.Close()
+
+	log.Printf("end of copy from %s to %s\n", src.RemoteAddr(), dst.RemoteAddr())
 }

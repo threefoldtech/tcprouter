@@ -1,4 +1,4 @@
-package main
+package tcprouter
 
 import (
 	"fmt"
@@ -8,16 +8,23 @@ import (
 	"github.com/abronan/valkeyrie/store"
 )
 
+var validBackends = map[string]store.Backend{
+	"redis":  store.REDIS,
+	"boltdb": store.BOLTDB,
+	"etcd":   store.ETCDV3,
+}
+
 type Config struct {
 	Server ServerConfig `toml:"server"`
 }
 
 type ServerConfig struct {
-	Host      string             `toml:"addr"`
-	Port      uint               `toml:"port"`
-	HTTPPort  uint               `toml:"httpport"`
-	DbBackend DbBackendConfig    `toml:"dbbackend"`
-	Services  map[string]Service `toml:"services"`
+	Host        string             `toml:"addr"`
+	Port        uint               `toml:"port"`
+	HTTPPort    uint               `toml:"httpport"`
+	ClientsPort uint               `toml:"clientsport"`
+	DbBackend   DbBackendConfig    `toml:"dbbackend"`
+	Services    map[string]Service `toml:"services"`
 }
 
 func (s ServerConfig) Addr() string {
@@ -25,20 +32,25 @@ func (s ServerConfig) Addr() string {
 }
 
 type Service struct {
-	Addr     string `toml:"addr"`
-	TLSPort  int    `toml:"tlsport"`
-	HTTPPort int    `toml:"httpport"`
+	Addr         string `toml:"addr"`
+	ClientSecret string `toml:"clientsecret` // will forward connection to it directly instead of hitting the Addr.
+	TLSPort      int    `toml:"tlsport"`
+	HTTPPort     int    `toml:"httpport"`
 }
 
 type DbBackendConfig struct {
 	DbType   string `toml:"type"`
-	Addr     string `toml:"addr"`
+	Host     string `toml:"addr"`
 	Port     uint   `toml:"port"`
 	Username string `toml:"username"`
 	Password string `toml:"password"`
 	Token    string `toml:"token"`
 	Refresh  uint   `toml:"refresh"`
 	//Bucket string `toml:"bucket"`
+}
+
+func (b DbBackendConfig) Addr() string {
+	return fmt.Sprintf("%s:%d", b.Host, b.Port)
 }
 
 func (b DbBackendConfig) Backend() store.Backend {

@@ -1,8 +1,7 @@
-package main
+package tcprouter
 
 import (
 	"bytes"
-	"crypto/rand"
 	"net"
 	"sync"
 	"testing"
@@ -14,15 +13,12 @@ import (
 func TestHandshakeEncodeDecode(t *testing.T) {
 
 	h := Handshake{
-		MagicNr: magicNr,
-		Secret:  [256]byte{},
+		MagicNr: MagicNr,
+		Secret:  []byte("hello world"),
 	}
-	n, err := rand.Read(h.Secret[:])
-	require.NoError(t, err)
-	require.Equal(t, 256, n)
 
 	b := bytes.Buffer{}
-	err = h.Write(&b)
+	err := h.Write(&b)
 	require.NoError(t, err)
 
 	h2 := &Handshake{}
@@ -35,12 +31,9 @@ func TestHandshakeEncodeDecode(t *testing.T) {
 
 func TestHandshake(t *testing.T) {
 	hc := Handshake{
-		MagicNr: magicNr,
-		Secret:  [256]byte{},
+		MagicNr: MagicNr,
+		Secret:  []byte("hello world"),
 	}
-	n, err := rand.Read(hc.Secret[:])
-	require.NoError(t, err)
-	require.Equal(t, 256, n)
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)

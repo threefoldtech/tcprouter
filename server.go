@@ -1,4 +1,4 @@
-package main
+package tcprouter
 
 import (
 	"bufio"
@@ -15,24 +15,30 @@ import (
 )
 
 type ServerOptions struct {
-	listeningAddr     string
-	listeningTLSPort  uint
-	listeningHTTPPort uint
+	ListeningAddr           string
+	ListeningTLSPort        uint
+	ListeningHTTPPort       uint
+	ListeningForClientsPort uint
 }
 
 func (o ServerOptions) HTTPAddr() string {
-	return fmt.Sprintf("%s:%d", o.listeningAddr, o.listeningHTTPPort)
+	return fmt.Sprintf("%s:%d", o.ListeningAddr, o.ListeningHTTPPort)
 }
 
 func (o ServerOptions) TLSAddr() string {
-	return fmt.Sprintf("%s:%d", o.listeningAddr, o.listeningTLSPort)
+	return fmt.Sprintf("%s:%d", o.ListeningAddr, o.ListeningTLSPort)
+}
+
+func (o ServerOptions) ClientsAddr() string {
+	return fmt.Sprintf("%s:%d", o.ListeningAddr, o.ListeningForClientsPort)
 }
 
 type Server struct {
-	ServerOptions ServerOptions
-	DbStore       store.Store
-	Services      map[string]Service
-	backendM      sync.RWMutex
+	ServerOptions     ServerOptions
+	DbStore           store.Store
+	Services          map[string]Service
+	backendM          sync.RWMutex
+	activeConnections map[string]net.Conn
 
 	ctx context.Context
 	wg  sync.WaitGroup
@@ -44,19 +50,21 @@ func NewServer(forwardOptions ServerOptions, store store.Store, services map[str
 	}
 
 	return &Server{
-		ServerOptions: forwardOptions,
-		Services:      services,
-		DbStore:       store,
+		ServerOptions:     forwardOptions,
+		Services:          services,
+		DbStore:           store,
+		activeConnections: make(map[string]net.Conn),
 	}
 }
 
 func (s *Server) Start(ctx context.Context) error {
 	for key, service := range s.Services {
-		s.RegisterService(key, service.Addr, service.TLSPort, service.HTTPPort)
+		s.RegisterService(key, service.Addr, service.ClientSecret, service.TLSPort, service.HTTPPort)
 	}
 
 	go s.serveHTTP(ctx)
 	go s.serveTLS(ctx)
+	go s.serveTCPRouterClients(ctx)
 
 	<-ctx.Done()
 
@@ -67,11 +75,11 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) RegisterService(name, remoteAddr string, tlsport int, httpport int) {
-	log.Println("register ", name, remoteAddr, tlsport, httpport)
+func (s *Server) RegisterService(name, remoteAddr, clientSecret string, tlsport int, httpport int) {
+	log.Println("register ", name, remoteAddr, clientSecret, tlsport, httpport)
 	s.backendM.Lock()
 	defer s.backendM.Unlock()
-	s.Services[name] = Service{Addr: remoteAddr, TLSPort: tlsport, HTTPPort: httpport}
+	s.Services[name] = Service{Addr: remoteAddr, ClientSecret: clientSecret, TLSPort: tlsport, HTTPPort: httpport}
 }
 
 func (s *Server) DeleteService(name string) {
@@ -106,6 +114,7 @@ func (s *Server) serveHTTP(ctx context.Context) {
 		log.Fatalf("failed to start tcp listener at  %s: %v", addr, err)
 	}
 
+	log.Println("started HTTP server..")
 	for {
 		select {
 		case <-ctx.Done():
@@ -150,36 +159,94 @@ func (s *Server) serveTLS(ctx context.Context) {
 	}
 }
 
-func (s *Server) handleConnection(mainconn net.Conn) error {
+func (s *Server) serveTCPRouterClients(ctx context.Context) {
+	addr := s.ServerOptions.ClientsAddr()
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to start tcp listener at %s: %v ", addr, err)
+	}
+
+	log.Println("started serving tcprouter clients..")
+	for {
+		select {
+		case <-ctx.Done():
+			ln.Close()
+			return
+
+		default:
+			conn, err := ln.Accept()
+			if err != nil {
+				log.Printf("error accepting tcprouter client connection: %v\n", err)
+				continue
+			}
+			log.Printf("new client connection from %s", conn.RemoteAddr())
+			if err := s.handleTCPRouterClientConnection(conn); err != nil {
+				log.Printf("handshake failed with client %s: %v\n", conn.RemoteAddr(), err)
+				conn.Close()
+			}
+		}
+	}
+}
+
+func (s *Server) handleTCPRouterClientConnection(conn net.Conn) error {
+	hs := &Handshake{}
+	if err := hs.Read(conn); err != nil {
+		log.Printf("handshake failed")
+		return err
+	}
+	if hs.MagicNr != MagicNr {
+		return fmt.Errorf("expected %d MagicNr and received %d", MagicNr, hs.MagicNr)
+	}
+	log.Printf("handshake done %v", hs)
+	log.Printf("Adding to active connections")
+	s.activeConnections[string(hs.Secret[:])] = conn
+
+	return nil
+}
+
+func (s *Server) handleConnection(mainconn net.Conn) {
 	br := bufio.NewReader(mainconn)
 	serverName, isTLS, peeked := clientHelloServerName(br)
 	log.Println("** SERVER NAME: SNI ", serverName, " isTLS: ", isTLS)
-	return s.handleService(mainconn, serverName, peeked, isTLS)
+	if err := s.handleService(mainconn, serverName, peeked, isTLS); err != nil {
+		log.Printf("error forwarding traffic for %s: %v\n", serverName, err)
+	}
 }
 
-func (s *Server) handleHTTPConnection(mainconn net.Conn) error {
+func (s *Server) handleHTTPConnection(mainconn net.Conn) {
 	br := bufio.NewReader(mainconn)
 	peeked := ""
-	serverName := ""
+	host := ""
 	for {
 		line, err := br.ReadString('\n')
 		if err != nil {
-			return err
+			log.Printf("failed to decode HTTP header: %v\n", err)
+			return
 		}
 		peeked = peeked + line
 		if strings.HasPrefix(line, "Host:") {
-			serverName = strings.Trim(line[6:], " \n\r")
+			host = strings.Trim(line[6:], " \n\r")
+			if strings.Contains(host, ":") {
+				host, _, err = net.SplitHostPort(host)
+				if err != nil {
+					log.Printf("failed to parse split host port from server name %s\n", host)
+					return
+				}
+			}
 		}
 		if strings.Trim(line, " \n\r") == "" {
 			break
 		}
 
 	}
-	if serverName == "" {
-		return fmt.Errorf("Could not find host")
+	if host == "" {
+		log.Println("could not find host in HTTP header")
+		return
 	}
-	fmt.Printf("** HOST NAME: '%s'\n", serverName)
-	return s.handleService(mainconn, serverName, peeked, false)
+	log.Printf("Host found: '%s'\n", host)
+	if err := s.handleService(mainconn, host, peeked, false); err != nil {
+		log.Printf("error forwarding traffic for %s: %v\n", host, err)
+	}
 }
 
 func (s *Server) handleService(mainconn net.Conn, serverName, peeked string, isTLS bool) error {
@@ -198,46 +265,62 @@ func (s *Server) handleService(mainconn net.Conn, serverName, peeked string, isT
 		log.Println("using global CATCH_ALL")
 
 		if exists == false {
-			return fmt.Errorf("service doesn't exist: %s and no 'CATCH_ALL' service for request", service)
+			return fmt.Errorf("service doesn't exist: %v and no 'CATCH_ALL' service for request", service)
 		}
 		log.Println("using global CATCH_ALL service.")
-	}
-	var remotePort int
-	if isTLS {
-		remotePort = service.TLSPort
-	} else {
-		remotePort = service.HTTPPort
 	}
 
 	log.Println("found service: ", service)
 	log.Println("handling connection from ", mainconn.RemoteAddr())
 
 	conn := GetConn(mainconn, peeked)
-	if err := s.forward(conn, service.Addr, remotePort); err != nil {
-		log.Printf("failed to forward traffic: %v\n", err)
+	var err error
+
+	if service.ClientSecret != "" {
+		activeConn, ok := s.activeConnections[service.ClientSecret]
+		if !ok {
+			err = fmt.Errorf("no active connection for service %s", serverName)
+		} else {
+			s.forwardConnection(conn, activeConn)
+		}
+	} else {
+		remotePort := service.HTTPPort
+		if isTLS {
+			remotePort = service.TLSPort
+		}
+		err = s.forwardConnectionToService(conn, service.Addr, remotePort)
 	}
+
+	if err != nil {
+		return fmt.Errorf("failed to forward traffic: %w", err)
+	}
+
 	return nil
 }
 
-func (s *Server) forward(conn net.Conn, remoteAddr string, remotePort int) error {
+func (s *Server) forwardConnection(local, remote net.Conn) {
+	log.Printf("forward active connection from %s to %s\n", local.RemoteAddr(), remote.RemoteAddr())
+
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go forward(local, remote, &wg)
+	go forward(remote, local, &wg)
+
+	wg.Wait()
+}
+
+func (s *Server) forwardConnectionToService(conn net.Conn, remoteAddr string, remotePort int) error {
 	remoteTCPAddr := &net.TCPAddr{IP: net.ParseIP(remoteAddr), Port: remotePort}
 	defer conn.Close()
 
 	connService, err := net.DialTCP("tcp", nil, remoteTCPAddr)
 	if err != nil {
-		return fmt.Errorf("error while connection to service: %w", err)
+		return fmt.Errorf("error while connection to service: %v", err)
 	}
 	log.Printf("connected to the service %s\n", remoteTCPAddr.String())
 
 	defer connService.Close()
 
-	errChan := make(chan error, 1)
-	go connCopy(conn, connService, errChan)
-	go connCopy(connService, conn, errChan)
-
-	err = <-errChan
-	if err != nil {
-		return fmt.Errorf("Error during connection: %w", err)
-	}
+	s.forwardConnection(conn, connService)
 	return nil
 }
