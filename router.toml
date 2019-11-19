@@ -2,6 +2,7 @@
 addr = "0.0.0.0"
 port = 443
 httpport = 80
+clientsport = 18000
 
 [server.dbbackend]
 type 	 = "redis"

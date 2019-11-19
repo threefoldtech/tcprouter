@@ -1,4 +1,4 @@
-package main
+package tcprouter
 
 import (
 	"bufio"
@@ -15,9 +15,10 @@ import (
 )
 
 type ServerOptions struct {
-	listeningAddr     string
-	listeningTLSPort  uint
-	listeningHTTPPort uint
+	listeningAddr           string
+	listeningTLSPort        uint
+	listeningHTTPPort       uint
+	listeningForClientsPort uint
 }
 
 func (o ServerOptions) HTTPAddr() string {
@@ -28,11 +29,23 @@ func (o ServerOptions) TLSAddr() string {
 	return fmt.Sprintf("%s:%d", o.listeningAddr, o.listeningTLSPort)
 }
 
+func (o ServerOptions) ClientsAddr() string {
+	return fmt.Sprintf("%s:%d", o.listeningAddr, o.listeningForClientsPort)
+}
+func NewServerOptions(listeningAddr string, listeningTLSPort, listeningHTTPPort, listeningForClientsPort uint) ServerOptions {
+	return ServerOptions{
+		listeningAddr:           listeningAddr,
+		listeningTLSPort:        listeningTLSPort,
+		listeningForClientsPort: listeningForClientsPort,
+	}
+}
+
 type Server struct {
-	ServerOptions ServerOptions
-	DbStore       store.Store
-	Services      map[string]Service
-	backendM      sync.RWMutex
+	ServerOptions     ServerOptions
+	DbStore           store.Store
+	Services          map[string]Service
+	backendM          sync.RWMutex
+	activeConnections map[[256]byte]net.Conn
 
 	ctx context.Context
 	wg  sync.WaitGroup
@@ -44,9 +57,10 @@ func NewServer(forwardOptions ServerOptions, store store.Store, services map[str
 	}
 
 	return &Server{
-		ServerOptions: forwardOptions,
-		Services:      services,
-		DbStore:       store,
+		ServerOptions:     forwardOptions,
+		Services:          services,
+		DbStore:           store,
+		activeConnections: make(map[[256]byte]net.Conn),
 	}
 }
 
@@ -57,6 +71,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	go s.serveHTTP(ctx)
 	go s.serveTLS(ctx)
+	go s.serveTCPRouterClients(ctx)
 
 	<-ctx.Done()
 
@@ -150,6 +165,48 @@ func (s *Server) serveTLS(ctx context.Context) {
 	}
 }
 
+func (s *Server) serveTCPRouterClients(ctx context.Context) {
+	addr := s.ServerOptions.ClientsAddr()
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to start tcp listener at %s: %v ", addr, err)
+	}
+
+	log.Println("started serving tcprouter clients..")
+	for {
+		select {
+		case <-ctx.Done():
+			ln.Close()
+			return
+
+		default:
+			conn, err := ln.Accept()
+			if err != nil {
+				log.Printf("error accepting tcprouter client connection: %v\n", err)
+				continue
+			}
+			// TODO: need to track these connection and close then when needed
+			go s.handleTCPRouterClientConnection(conn)
+		}
+	}
+}
+
+func (s *Server) handleTCPRouterClientConnection(mainconn net.Conn) error {
+	br := bufio.NewReader(mainconn)
+	hs := &Handshake{}
+	if err := hs.Read(br); err != nil {
+		log.Printf("handshake failed")
+		return err
+	} else {
+		log.Printf("handshake done %v", hs)
+		log.Printf("secret: %s", hs.Secret)
+		log.Printf("Adding to active connections")
+		s.activeConnections[hs.Secret] = mainconn
+
+		return nil
+	}
+}
+
 func (s *Server) handleConnection(mainconn net.Conn) error {
 	br := bufio.NewReader(mainconn)
 	serverName, isTLS, peeked := clientHelloServerName(br)
@@ -198,7 +255,7 @@ func (s *Server) handleService(mainconn net.Conn, serverName, peeked string, isT
 		log.Println("using global CATCH_ALL")
 
 		if exists == false {
-			return fmt.Errorf("service doesn't exist: %s and no 'CATCH_ALL' service for request", service)
+			return fmt.Errorf("service doesn't exist: %v and no 'CATCH_ALL' service for request", service)
 		}
 		log.Println("using global CATCH_ALL service.")
 	}
@@ -225,7 +282,7 @@ func (s *Server) forward(conn net.Conn, remoteAddr string, remotePort int) error
 
 	connService, err := net.DialTCP("tcp", nil, remoteTCPAddr)
 	if err != nil {
-		return fmt.Errorf("error while connection to service: %w", err)
+		return fmt.Errorf("error while connection to service: %v", err)
 	}
 	log.Printf("connected to the service %s\n", remoteTCPAddr.String())
 
@@ -237,7 +294,7 @@ func (s *Server) forward(conn net.Conn, remoteAddr string, remotePort int) error
 
 	err = <-errChan
 	if err != nil {
-		return fmt.Errorf("Error during connection: %w", err)
+		return fmt.Errorf("Error during connection: %v", err)
 	}
 	return nil
 }

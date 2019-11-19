@@ -1,4 +1,4 @@
-package main
+package tcprouter
 
 import (
 	"fmt"
@@ -8,16 +8,23 @@ import (
 	"github.com/abronan/valkeyrie/store"
 )
 
+var validBackends = map[string]store.Backend{
+	"redis":  store.REDIS,
+	"boltdb": store.BOLTDB,
+	"etcd":   store.ETCDV3,
+}
+
 type Config struct {
 	Server ServerConfig `toml:"server"`
 }
 
 type ServerConfig struct {
-	Host      string             `toml:"addr"`
-	Port      uint               `toml:"port"`
-	HTTPPort  uint               `toml:"httpport"`
-	DbBackend DbBackendConfig    `toml:"dbbackend"`
-	Services  map[string]Service `toml:"services"`
+	Host        string             `toml:"addr"`
+	Port        uint               `toml:"port"`
+	HTTPPort    uint               `toml:"httpport"`
+	ClientsPort uint               `toml:"clientsport"`
+	DbBackend   DbBackendConfig    `toml:"dbbackend"`
+	Services    map[string]Service `toml:"services"`
 }
 
 func (s ServerConfig) Addr() string {
