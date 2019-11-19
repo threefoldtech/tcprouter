@@ -114,6 +114,7 @@ func (s *Server) serveHTTP(ctx context.Context) {
 		log.Fatalf("failed to start tcp listener at  %s: %v", addr, err)
 	}
 
+	log.Println("started HTTP server..")
 	for {
 		select {
 		case <-ctx.Done():
@@ -178,16 +179,18 @@ func (s *Server) serveTCPRouterClients(ctx context.Context) {
 				log.Printf("error accepting tcprouter client connection: %v\n", err)
 				continue
 			}
-			// TODO: need to track these connection and close then when needed
-			s.handleTCPRouterClientConnection(conn)
+			log.Printf("new client connection from %s", conn.RemoteAddr())
+			if err := s.handleTCPRouterClientConnection(conn); err != nil {
+				log.Printf("handshake failed with client %s: %v\n", conn.RemoteAddr(), err)
+				conn.Close()
+			}
 		}
 	}
 }
 
-func (s *Server) handleTCPRouterClientConnection(mainconn net.Conn) error {
-	br := bufio.NewReader(mainconn)
+func (s *Server) handleTCPRouterClientConnection(conn net.Conn) error {
 	hs := &Handshake{}
-	if err := hs.Read(br); err != nil {
+	if err := hs.Read(conn); err != nil {
 		log.Printf("handshake failed")
 		return err
 	}
@@ -196,41 +199,55 @@ func (s *Server) handleTCPRouterClientConnection(mainconn net.Conn) error {
 	}
 	log.Printf("handshake done %v", hs)
 	log.Printf("Adding to active connections")
-	s.activeConnections[string(hs.Secret[:])] = mainconn
+	s.activeConnections[string(hs.Secret[:])] = conn
 
 	return nil
 }
 
-func (s *Server) handleConnection(mainconn net.Conn) error {
+func (s *Server) handleConnection(mainconn net.Conn) {
 	br := bufio.NewReader(mainconn)
 	serverName, isTLS, peeked := clientHelloServerName(br)
 	log.Println("** SERVER NAME: SNI ", serverName, " isTLS: ", isTLS)
-	return s.handleService(mainconn, serverName, peeked, isTLS)
+	if err := s.handleService(mainconn, serverName, peeked, isTLS); err != nil {
+		log.Printf("error forwarding traffic for %s: %v\n", serverName, err)
+	}
 }
 
-func (s *Server) handleHTTPConnection(mainconn net.Conn) error {
+func (s *Server) handleHTTPConnection(mainconn net.Conn) {
 	br := bufio.NewReader(mainconn)
 	peeked := ""
 	serverName := ""
+	host := ""
 	for {
 		line, err := br.ReadString('\n')
 		if err != nil {
-			return err
+			log.Printf("failed to decode HTTP header: %v\n", err)
+			return
 		}
 		peeked = peeked + line
 		if strings.HasPrefix(line, "Host:") {
 			serverName = strings.Trim(line[6:], " \n\r")
+			if strings.Contains(serverName, ":") {
+				host, _, err = net.SplitHostPort(serverName)
+				if err != nil {
+					log.Printf("failed to parse split host port from server name %s\n", serverName)
+					return
+				}
+			}
 		}
 		if strings.Trim(line, " \n\r") == "" {
 			break
 		}
 
 	}
-	if serverName == "" {
-		return fmt.Errorf("Could not find host")
+	if host == "" {
+		log.Println("could not find host in HTTP header")
+		return
 	}
-	fmt.Printf("** HOST NAME: '%s'\n", serverName)
-	return s.handleService(mainconn, serverName, peeked, false)
+	log.Printf("Host found: '%s'\n", host)
+	if err := s.handleService(mainconn, host, peeked, false); err != nil {
+		log.Printf("error forwarding traffic for %s: %v\n", host, err)
+	}
 }
 
 func (s *Server) handleService(mainconn net.Conn, serverName, peeked string, isTLS bool) error {
@@ -253,45 +270,44 @@ func (s *Server) handleService(mainconn net.Conn, serverName, peeked string, isT
 		}
 		log.Println("using global CATCH_ALL service.")
 	}
-	var remotePort int
-	if isTLS {
-		remotePort = service.TLSPort
-	} else {
-		remotePort = service.HTTPPort
-	}
 
 	log.Println("found service: ", service)
 	log.Println("handling connection from ", mainconn.RemoteAddr())
 
 	conn := GetConn(mainconn, peeked)
 	var err error
+
 	if service.ClientSecret != "" {
 		activeConn, ok := s.activeConnections[service.ClientSecret]
 		if !ok {
-			err = fmt.Errorf("no active connection for %s", serverName)
+			err = fmt.Errorf("no active connection for service %s", serverName)
 		} else {
-			err = s.forwardConnection(conn, activeConn)
+			s.forwardConnection(conn, activeConn)
 		}
 	} else {
+		remotePort := service.HTTPPort
+		if isTLS {
+			remotePort = service.TLSPort
+		}
 		err = s.forwardConnectionToService(conn, service.Addr, remotePort)
 	}
-	if err != nil {
-		log.Printf("failed to forward traffic: %v\n", err)
-	}
-	return err
 
+	if err != nil {
+		return fmt.Errorf("failed to forward traffic: %w", err)
+	}
+
+	return nil
 }
 
-func (s *Server) forwardConnection(conn1, conn2 net.Conn) error {
-	errChan := make(chan error, 1)
-	go connCopy(conn1, conn2, errChan)
-	go connCopy(conn2, conn1, errChan)
+func (s *Server) forwardConnection(local, remote net.Conn) {
+	log.Printf("forward active connection from %s to %s\n", local.RemoteAddr(), remote.RemoteAddr())
 
-	err := <-errChan
-	if err != nil {
-		return fmt.Errorf("Error during connection: %v", err)
-	}
-	return nil
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go forward(local, remote, &wg)
+	go forward(remote, local, &wg)
+
+	wg.Wait()
 }
 
 func (s *Server) forwardConnectionToService(conn net.Conn, remoteAddr string, remotePort int) error {
@@ -306,5 +322,6 @@ func (s *Server) forwardConnectionToService(conn net.Conn, remoteAddr string, re
 
 	defer connService.Close()
 
-	return s.forwardConnection(conn, connService)
+	s.forwardConnection(conn, connService)
+	return nil
 }
