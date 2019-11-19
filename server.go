@@ -45,7 +45,7 @@ type Server struct {
 	DbStore           store.Store
 	Services          map[string]Service
 	backendM          sync.RWMutex
-	activeConnections map[[256]byte]net.Conn
+	activeConnections map[string]net.Conn
 
 	ctx context.Context
 	wg  sync.WaitGroup
@@ -60,13 +60,13 @@ func NewServer(forwardOptions ServerOptions, store store.Store, services map[str
 		ServerOptions:     forwardOptions,
 		Services:          services,
 		DbStore:           store,
-		activeConnections: make(map[[256]byte]net.Conn),
+		activeConnections: make(map[string]net.Conn),
 	}
 }
 
 func (s *Server) Start(ctx context.Context) error {
 	for key, service := range s.Services {
-		s.RegisterService(key, service.Addr, service.TLSPort, service.HTTPPort)
+		s.RegisterService(key, service.Addr, service.ClientSecret, service.TLSPort, service.HTTPPort)
 	}
 
 	go s.serveHTTP(ctx)
@@ -82,11 +82,11 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) RegisterService(name, remoteAddr string, tlsport int, httpport int) {
-	log.Println("register ", name, remoteAddr, tlsport, httpport)
+func (s *Server) RegisterService(name, remoteAddr, clientSecret string, tlsport int, httpport int) {
+	log.Println("register ", name, remoteAddr, clientSecret, tlsport, httpport)
 	s.backendM.Lock()
 	defer s.backendM.Unlock()
-	s.Services[name] = Service{Addr: remoteAddr, TLSPort: tlsport, HTTPPort: httpport}
+	s.Services[name] = Service{Addr: remoteAddr, ClientSecret: clientSecret, TLSPort: tlsport, HTTPPort: httpport}
 }
 
 func (s *Server) DeleteService(name string) {
@@ -199,9 +199,9 @@ func (s *Server) handleTCPRouterClientConnection(mainconn net.Conn) error {
 		return err
 	} else {
 		log.Printf("handshake done %v", hs)
-		log.Printf("secret: %s", hs.Secret)
+		log.Printf("secret: %s", string(hs.Secret[:]))
 		log.Printf("Adding to active connections")
-		s.activeConnections[hs.Secret] = mainconn
+		s.activeConnections[string(hs.Secret[:])] = mainconn
 
 		return nil
 	}
@@ -270,8 +270,29 @@ func (s *Server) handleService(mainconn net.Conn, serverName, peeked string, isT
 	log.Println("handling connection from ", mainconn.RemoteAddr())
 
 	conn := GetConn(mainconn, peeked)
-	if err := s.forward(conn, service.Addr, remotePort); err != nil {
-		log.Printf("failed to forward traffic: %v\n", err)
+	if service.ClientSecret != "" {
+		// forward to an active connection
+		if err := s.forwardToActiveConnection(conn, s.activeConnections[service.ClientSecret]); err != nil {
+			return err
+		}
+	} else {
+		if err := s.forward(conn, service.Addr, remotePort); err != nil {
+			log.Printf("failed to forward traffic: %v\n", err)
+			return err
+		}
+	}
+	return nil
+
+}
+
+func (s *Server) forwardToActiveConnection(conn, activeConn net.Conn) error {
+	errChan := make(chan error, 1)
+	go connCopy(conn, activeConn, errChan)
+	go connCopy(activeConn, conn, errChan)
+
+	err := <-errChan
+	if err != nil {
+		return fmt.Errorf("Error during connection: %v", err)
 	}
 	return nil
 }
