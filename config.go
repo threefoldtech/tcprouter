@@ -40,13 +40,17 @@ type Service struct {
 
 type DbBackendConfig struct {
 	DbType   string `toml:"type"`
-	Addr     string `toml:"addr"`
+	Host     string `toml:"addr"`
 	Port     uint   `toml:"port"`
 	Username string `toml:"username"`
 	Password string `toml:"password"`
 	Token    string `toml:"token"`
 	Refresh  uint   `toml:"refresh"`
 	//Bucket string `toml:"bucket"`
+}
+
+func (b DbBackendConfig) Addr() string {
+	return fmt.Sprintf("%s:%d", b.Host, b.Port)
 }
 
 func (b DbBackendConfig) Backend() store.Backend {
