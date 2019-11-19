@@ -7,7 +7,7 @@ import (
 
 const (
 	// TODO: chose a valid magic number
-	magicNr = 0x1111
+	MagicNr = 0x1111
 )
 
 // Handshake is the struct used to serialize the first frame sent to the server

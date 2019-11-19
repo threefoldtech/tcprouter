@@ -70,7 +70,7 @@ func (c *client) Handshake() error {
 	}
 
 	h := Handshake{
-		MagicNr: magicNr,
+		MagicNr: MagicNr,
 		Secret:  [256]byte{},
 	}
 	copy(h.Secret[:], c.secret)

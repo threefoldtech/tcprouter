@@ -179,7 +179,7 @@ func (s *Server) serveTCPRouterClients(ctx context.Context) {
 				continue
 			}
 			// TODO: need to track these connection and close then when needed
-			go s.handleTCPRouterClientConnection(conn)
+			s.handleTCPRouterClientConnection(conn)
 		}
 	}
 }
@@ -190,14 +190,16 @@ func (s *Server) handleTCPRouterClientConnection(mainconn net.Conn) error {
 	if err := hs.Read(br); err != nil {
 		log.Printf("handshake failed")
 		return err
-	} else {
+	}
+	if hs.MagicNr == MagicNr {
 		log.Printf("handshake done %v", hs)
-		log.Printf("secret: %s", string(hs.Secret[:]))
 		log.Printf("Adding to active connections")
 		s.activeConnections[string(hs.Secret[:])] = mainconn
-
-		return nil
+	} else {
+		return fmt.Errorf("expected %d MagicNr and received %d", MagicNr, hs.MagicNr)
 	}
+
+	return nil
 }
 
 func (s *Server) handleConnection(mainconn net.Conn) error {
@@ -265,11 +267,11 @@ func (s *Server) handleService(mainconn net.Conn, serverName, peeked string, isT
 	conn := GetConn(mainconn, peeked)
 	if service.ClientSecret != "" {
 		// forward to an active connection
-		if err := s.forwardToActiveConnection(conn, s.activeConnections[service.ClientSecret]); err != nil {
+		if err := s.forwardConnection(conn, s.activeConnections[service.ClientSecret]); err != nil {
 			return err
 		}
 	} else {
-		if err := s.forward(conn, service.Addr, remotePort); err != nil {
+		if err := s.forwardConnectionToService(conn, service.Addr, remotePort); err != nil {
 			log.Printf("failed to forward traffic: %v\n", err)
 			return err
 		}
@@ -278,10 +280,10 @@ func (s *Server) handleService(mainconn net.Conn, serverName, peeked string, isT
 
 }
 
-func (s *Server) forwardToActiveConnection(conn, activeConn net.Conn) error {
+func (s *Server) forwardConnection(conn1, conn2 net.Conn) error {
 	errChan := make(chan error, 1)
-	go connCopy(conn, activeConn, errChan)
-	go connCopy(activeConn, conn, errChan)
+	go connCopy(conn1, conn2, errChan)
+	go connCopy(conn2, conn1, errChan)
 
 	err := <-errChan
 	if err != nil {
@@ -290,7 +292,7 @@ func (s *Server) forwardToActiveConnection(conn, activeConn net.Conn) error {
 	return nil
 }
 
-func (s *Server) forward(conn net.Conn, remoteAddr string, remotePort int) error {
+func (s *Server) forwardConnectionToService(conn net.Conn, remoteAddr string, remotePort int) error {
 	remoteTCPAddr := &net.TCPAddr{IP: net.ParseIP(remoteAddr), Port: remotePort}
 	defer conn.Close()
 
@@ -302,13 +304,5 @@ func (s *Server) forward(conn net.Conn, remoteAddr string, remotePort int) error
 
 	defer connService.Close()
 
-	errChan := make(chan error, 1)
-	go connCopy(conn, connService, errChan)
-	go connCopy(connService, conn, errChan)
-
-	err = <-errChan
-	if err != nil {
-		return fmt.Errorf("Error during connection: %v", err)
-	}
-	return nil
+	return s.forwardConnection(conn, connService)
 }
