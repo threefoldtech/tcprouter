@@ -84,7 +84,8 @@ func main() {
 		log.Fatalf("Cannot create %s store: %v", backend, err)
 	}
 
-	serverOpts := tcprouter.NewServerOptions(cfg.Server.Host, cfg.Server.Port, cfg.Server.HTTPPort, cfg.Server.ClientsPort)
+	serverOpts := tcprouter.ServerOptions{ListeningAddr: cfg.Server.Host, ListeningTLSPort: cfg.Server.Port, ListeningHTTPPort: cfg.Server.HTTPPort, ListeningForClientsPort: cfg.Server.ClientsPort}
+
 	s := tcprouter.NewServer(serverOpts, kv, cfg.Server.Services)
 
 	c := make(chan os.Signal, 1)

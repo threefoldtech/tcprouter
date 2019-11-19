@@ -15,29 +15,22 @@ import (
 )
 
 type ServerOptions struct {
-	listeningAddr           string
-	listeningTLSPort        uint
-	listeningHTTPPort       uint
-	listeningForClientsPort uint
+	ListeningAddr           string
+	ListeningTLSPort        uint
+	ListeningHTTPPort       uint
+	ListeningForClientsPort uint
 }
 
 func (o ServerOptions) HTTPAddr() string {
-	return fmt.Sprintf("%s:%d", o.listeningAddr, o.listeningHTTPPort)
+	return fmt.Sprintf("%s:%d", o.ListeningAddr, o.ListeningHTTPPort)
 }
 
 func (o ServerOptions) TLSAddr() string {
-	return fmt.Sprintf("%s:%d", o.listeningAddr, o.listeningTLSPort)
+	return fmt.Sprintf("%s:%d", o.ListeningAddr, o.ListeningTLSPort)
 }
 
 func (o ServerOptions) ClientsAddr() string {
-	return fmt.Sprintf("%s:%d", o.listeningAddr, o.listeningForClientsPort)
-}
-func NewServerOptions(listeningAddr string, listeningTLSPort, listeningHTTPPort, listeningForClientsPort uint) ServerOptions {
-	return ServerOptions{
-		listeningAddr:           listeningAddr,
-		listeningTLSPort:        listeningTLSPort,
-		listeningForClientsPort: listeningForClientsPort,
-	}
+	return fmt.Sprintf("%s:%d", o.ListeningAddr, o.ListeningForClientsPort)
 }
 
 type Server struct {
