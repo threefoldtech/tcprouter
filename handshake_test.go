@@ -68,20 +68,3 @@ func TestHandshake(t *testing.T) {
 
 	wg.Wait()
 }
-
-func TestHandshakeAgainstTCPRouterServer(t *testing.T) {
-	hc := Handshake{
-		MagicNr: magicNr,
-		Secret:  [256]byte{},
-	}
-	n, err := rand.Read(hc.Secret[:])
-	require.NoError(t, err)
-	require.Equal(t, 256, n)
-
-	conn, err := net.Dial("tcp", "127.0.0.1:18000")
-	require.NoError(t, err)
-
-	err = hc.Write(conn)
-	require.NoError(t, err)
-
-}
