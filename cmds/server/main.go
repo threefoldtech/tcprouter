@@ -78,7 +78,7 @@ func main() {
 	}
 
 	backend := cfg.Server.DbBackend.Backend()
-	addr := cfg.Server.Addr()
+	addr := cfg.Server.DbBackend.Addr()
 	kv, err := initStore(backend, addr)
 	if err != nil {
 		log.Fatalf("Cannot create %s store: %v", backend, err)
