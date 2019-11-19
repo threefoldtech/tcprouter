@@ -1,10 +1,10 @@
 server:
-	cd cmd/server && go build && mv server ../../tcprouterserver
+	cd cmd/server && go build && mkdir -p ../../bin && mv server ../../bin/tcprouterserver
 
 client:
-	cd cmd/client && go build && mv client ../../tcprouterclient
+	cd cmd/client && go build && mkdir -p ../../bin && mv client  ../../bin/tcprouterclient
 
 all: server client
 
 runserver: server
-	sudo ./tcprouterserver -config router.toml
+	sudo ./bin/tcprouterserver -config router.toml
