@@ -216,7 +216,6 @@ func (s *Server) handleConnection(mainconn net.Conn) {
 func (s *Server) handleHTTPConnection(mainconn net.Conn) {
 	br := bufio.NewReader(mainconn)
 	peeked := ""
-	serverName := ""
 	host := ""
 	for {
 		line, err := br.ReadString('\n')
@@ -226,11 +225,11 @@ func (s *Server) handleHTTPConnection(mainconn net.Conn) {
 		}
 		peeked = peeked + line
 		if strings.HasPrefix(line, "Host:") {
-			serverName = strings.Trim(line[6:], " \n\r")
-			if strings.Contains(serverName, ":") {
-				host, _, err = net.SplitHostPort(serverName)
+			host = strings.Trim(line[6:], " \n\r")
+			if strings.Contains(host, ":") {
+				host, _, err = net.SplitHostPort(host)
 				if err != nil {
-					log.Printf("failed to parse split host port from server name %s\n", serverName)
+					log.Printf("failed to parse split host port from server name %s\n", host)
 					return
 				}
 			}
