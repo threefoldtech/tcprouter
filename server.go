@@ -191,13 +191,12 @@ func (s *Server) handleTCPRouterClientConnection(mainconn net.Conn) error {
 		log.Printf("handshake failed")
 		return err
 	}
-	if hs.MagicNr == MagicNr {
-		log.Printf("handshake done %v", hs)
-		log.Printf("Adding to active connections")
-		s.activeConnections[string(hs.Secret[:])] = mainconn
-	} else {
+	if hs.MagicNr != MagicNr {
 		return fmt.Errorf("expected %d MagicNr and received %d", MagicNr, hs.MagicNr)
 	}
+	log.Printf("handshake done %v", hs)
+	log.Printf("Adding to active connections")
+	s.activeConnections[string(hs.Secret[:])] = mainconn
 
 	return nil
 }
@@ -265,18 +264,21 @@ func (s *Server) handleService(mainconn net.Conn, serverName, peeked string, isT
 	log.Println("handling connection from ", mainconn.RemoteAddr())
 
 	conn := GetConn(mainconn, peeked)
+	var err error
 	if service.ClientSecret != "" {
-		// forward to an active connection
-		if err := s.forwardConnection(conn, s.activeConnections[service.ClientSecret]); err != nil {
-			return err
+		activeConn, ok := s.activeConnections[service.ClientSecret]
+		if !ok {
+			err = fmt.Errorf("no active connection for %s", serverName)
+		} else {
+			err = s.forwardConnection(conn, activeConn)
 		}
 	} else {
-		if err := s.forwardConnectionToService(conn, service.Addr, remotePort); err != nil {
-			log.Printf("failed to forward traffic: %v\n", err)
-			return err
-		}
+		err = s.forwardConnectionToService(conn, service.Addr, remotePort)
 	}
-	return nil
+	if err != nil {
+		log.Printf("failed to forward traffic: %v\n", err)
+	}
+	return err
 
 }
 
