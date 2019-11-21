@@ -212,4 +212,4 @@ type Handshake struct {
 	Secret  []byte
 }
 ```
-a packet starts with MagicNr and followed 
+a packet starts with MagicNr `0x1111` and followed by secret
