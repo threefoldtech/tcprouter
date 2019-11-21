@@ -18,7 +18,7 @@ refresh  = 5
         addr = "151.101.240.223"
         tlsport = 443
 
-    [server.services."www.raby-lang.org"]
+    [server.services."www.ruby-lang.org"]
         addr = "151.101.1.178"
         tlsport = 443
 
