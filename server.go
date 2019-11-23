@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"log"
 
@@ -40,8 +41,9 @@ type Server struct {
 	backendM          sync.RWMutex
 	activeConnections map[string]net.Conn
 
-	ctx context.Context
-	wg  sync.WaitGroup
+	listeners []net.Listener
+	wg        sync.WaitGroup
+	ctx       context.Context
 }
 
 func NewServer(forwardOptions ServerOptions, store store.Store, services map[string]Service) *Server {
@@ -54,38 +56,63 @@ func NewServer(forwardOptions ServerOptions, store store.Store, services map[str
 		Services:          services,
 		DbStore:           store,
 		activeConnections: make(map[string]net.Conn),
+		listeners:         []net.Listener{},
 	}
 }
 
 func (s *Server) Start(ctx context.Context) error {
-	for key, service := range s.Services {
-		s.RegisterService(key, service.Addr, service.ClientSecret, service.TLSPort, service.HTTPPort)
-	}
 
-	go s.serveHTTP(ctx)
-	go s.serveTLS(ctx)
-	go s.serveTCPRouterClients(ctx)
+	s.wg.Add(3)
+	go s.listen(ctx, s.ServerOptions.HTTPAddr(), HandlerFunc(s.handleHTTPConnection))
+	go s.listen(ctx, s.ServerOptions.TLSAddr(), HandlerFunc(s.handleConnection))
+	go s.listen(ctx, s.ServerOptions.ClientsAddr(), HandlerFunc(s.handleTCPRouterClientConnection))
 
-	<-ctx.Done()
-
-	log.Print("stopping server...")
 	s.wg.Wait()
+	log.Print("stopping server...")
+	for _, ln := range s.listeners {
+		if ln != nil {
+			if err := ln.Close(); err != nil {
+				log.Printf("error closing connection: %v", err)
+			}
+		}
+	}
 	log.Println("stopped")
 
 	return nil
 }
 
-func (s *Server) RegisterService(name, remoteAddr, clientSecret string, tlsport int, httpport int) {
-	log.Println("register ", name, remoteAddr, clientSecret, tlsport, httpport)
-	s.backendM.Lock()
-	defer s.backendM.Unlock()
-	s.Services[name] = Service{Addr: remoteAddr, ClientSecret: clientSecret, TLSPort: tlsport, HTTPPort: httpport}
-}
+func (s *Server) listen(ctx context.Context, addr string, handler Handler) {
+	defer s.wg.Done()
 
-func (s *Server) DeleteService(name string) {
-	s.backendM.Lock()
-	defer s.backendM.Unlock()
-	delete(s.Services, name)
+	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to resolve addr %v: %v", addr, err)
+	}
+
+	ln, err := net.ListenTCP("tcp", tcpAddr)
+	if err != nil {
+		log.Fatalf("failed to start listener on addr %v: %v", addr, err)
+	}
+	s.listeners = append(s.listeners, ln)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		default:
+			ln.SetDeadline(time.Now().Add(time.Second))
+			conn, err := ln.AcceptTCP()
+			if err != nil {
+				if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
+					continue
+				}
+				log.Fatalf("Failed to accept connection: %v\n", err)
+			}
+			// TODO: need to track these connection and close then when needed
+			go handler.ServeTCP(conn)
+		}
+	}
 }
 
 func (s *Server) getHost(host string) (Service, error) {
@@ -107,114 +134,34 @@ func (s *Server) getHost(host string) (Service, error) {
 	return service, nil
 }
 
-func (s *Server) serveHTTP(ctx context.Context) {
-	addr := s.ServerOptions.HTTPAddr()
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		log.Fatalf("failed to start tcp listener at  %s: %v", addr, err)
-	}
-
-	log.Println("started HTTP server..")
-	for {
-		select {
-		case <-ctx.Done():
-			ln.Close()
-			return
-
-		default:
-			conn, err := ln.Accept()
-			if err != nil {
-				log.Printf("error accepting TLS connection: %v\n", err)
-				continue
-			}
-			// TODO: need to track these connection and close then when needed
-			go s.handleHTTPConnection(conn)
-		}
-	}
-}
-
-func (s *Server) serveTLS(ctx context.Context) {
-	addr := s.ServerOptions.TLSAddr()
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		log.Fatalf("failed to start tcp listener at %s: %v ", addr, err)
-	}
-
-	log.Println("started TLS server..")
-	for {
-		select {
-		case <-ctx.Done():
-			ln.Close()
-			return
-
-		default:
-			conn, err := ln.Accept()
-			if err != nil {
-				log.Printf("error accepting TLS connection: %v\n", err)
-				continue
-			}
-			// TODO: need to track these connection and close then when needed
-			go s.handleConnection(conn)
-		}
-	}
-}
-
-func (s *Server) serveTCPRouterClients(ctx context.Context) {
-	addr := s.ServerOptions.ClientsAddr()
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		log.Fatalf("failed to start tcp listener at %s: %v ", addr, err)
-	}
-
-	log.Println("started serving tcprouter clients..")
-	for {
-		select {
-		case <-ctx.Done():
-			ln.Close()
-			return
-
-		default:
-			conn, err := ln.Accept()
-			if err != nil {
-				log.Printf("error accepting tcprouter client connection: %v\n", err)
-				continue
-			}
-			log.Printf("new client connection from %s", conn.RemoteAddr())
-			if err := s.handleTCPRouterClientConnection(conn); err != nil {
-				log.Printf("handshake failed with client %s: %v\n", conn.RemoteAddr(), err)
-				conn.Close()
-			}
-		}
-	}
-}
-
-func (s *Server) handleTCPRouterClientConnection(conn net.Conn) error {
+func (s *Server) handleTCPRouterClientConnection(conn WriteCloser) {
 	hs := &Handshake{}
 	if err := hs.Read(conn); err != nil {
 		log.Printf("handshake failed")
-		return err
+		conn.Close()
+		return
 	}
 	if hs.MagicNr != MagicNr {
-		return fmt.Errorf("expected %d MagicNr and received %d", MagicNr, hs.MagicNr)
+		log.Printf("expected %d MagicNr and received %d", MagicNr, hs.MagicNr)
+		conn.Close()
+		return
 	}
 	log.Printf("handshake done %v", hs)
 	log.Printf("Adding to active connections")
 	s.activeConnections[string(hs.Secret[:])] = conn
-
-	return nil
 }
 
-func (s *Server) handleConnection(mainconn net.Conn) {
-	br := bufio.NewReader(mainconn)
+func (s *Server) handleConnection(conn WriteCloser) {
+	br := bufio.NewReader(conn)
 	serverName, isTLS, peeked := clientHelloServerName(br)
 	log.Println("** SERVER NAME: SNI ", serverName, " isTLS: ", isTLS)
-	if err := s.handleService(mainconn, serverName, peeked, isTLS); err != nil {
+	if err := s.handleService(conn, serverName, peeked, isTLS); err != nil {
 		log.Printf("error forwarding traffic for %s: %v\n", serverName, err)
 	}
 }
 
-func (s *Server) handleHTTPConnection(mainconn net.Conn) {
-	br := bufio.NewReader(mainconn)
+func (s *Server) handleHTTPConnection(conn WriteCloser) {
+	br := bufio.NewReader(conn)
 	peeked := ""
 	host := ""
 	for {
@@ -244,7 +191,7 @@ func (s *Server) handleHTTPConnection(mainconn net.Conn) {
 		return
 	}
 	log.Printf("Host found: '%s'\n", host)
-	if err := s.handleService(mainconn, host, peeked, false); err != nil {
+	if err := s.handleService(conn, host, peeked, false); err != nil {
 		log.Printf("error forwarding traffic for %s: %v\n", host, err)
 	}
 }
@@ -301,25 +248,31 @@ func (s *Server) handleService(mainconn net.Conn, serverName, peeked string, isT
 func (s *Server) forwardConnection(local, remote net.Conn) {
 	log.Printf("forward active connection from %s to %s\n", local.RemoteAddr(), remote.RemoteAddr())
 
-	wg := sync.WaitGroup{}
-	wg.Add(2)
-	go forward(local, remote, &wg)
-	go forward(remote, local, &wg)
+	cErr := make(chan error)
+	defer func() {
+		local.Close()
+		remote.Close()
+	}()
 
-	wg.Wait()
+	go forward(local, remote, cErr)
+	go forward(remote, local, cErr)
+
+	err := <-cErr
+	if err != nil {
+		log.Printf("Error during connection: %v", err)
+	}
+
+	<-cErr
 }
 
 func (s *Server) forwardConnectionToService(conn net.Conn, remoteAddr string, remotePort int) error {
 	remoteTCPAddr := &net.TCPAddr{IP: net.ParseIP(remoteAddr), Port: remotePort}
-	defer conn.Close()
 
 	connService, err := net.DialTCP("tcp", nil, remoteTCPAddr)
 	if err != nil {
 		return fmt.Errorf("error while connection to service: %v", err)
 	}
 	log.Printf("connected to the service %s\n", remoteTCPAddr.String())
-
-	defer connService.Close()
 
 	s.forwardConnection(conn, connService)
 	return nil

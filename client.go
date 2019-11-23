@@ -5,7 +5,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"sync"
 )
 
 type client struct {
@@ -22,16 +21,6 @@ type client struct {
 func NewClient(secret string) *client {
 	return &client{
 		secret: []byte(secret),
-	}
-}
-
-func (c *client) Close() {
-	if c.RemoteConn != nil {
-		c.RemoteConn.Close()
-	}
-
-	if c.LocalConn != nil {
-		c.LocalConn.Close()
 	}
 }
 
@@ -75,30 +64,33 @@ func (c *client) Handshake() error {
 	return h.Write(c.RemoteConn)
 }
 
-func (c *client) Forward() error {
+func (c *client) Forward() {
 
-	wg := sync.WaitGroup{}
-	wg.Add(2)
-
-	go forward(c.LocalConn, c.RemoteConn, &wg)
-	go forward(c.RemoteConn, c.LocalConn, &wg)
-
+	cErr := make(chan error)
 	defer func() {
-		log.Println("close connections")
 		c.RemoteConn.Close()
 		c.LocalConn.Close()
 	}()
 
-	wg.Wait()
-	return nil
+	go forward(c.LocalConn, c.RemoteConn, cErr)
+	go forward(c.RemoteConn, c.LocalConn, cErr)
+
+	err := <-cErr
+	if err != nil {
+		log.Printf("Error during connection: %v", err)
+	}
+
+	<-cErr
 }
 
-func forward(dst, src net.Conn, wg *sync.WaitGroup) {
-	defer wg.Done()
-	io.Copy(dst, src)
+func forward(dst, src net.Conn, cErr chan<- error) {
+	_, err := io.Copy(dst, src)
+	cErr <- err
 
-	dst.Close()
-	src.Close()
-
-	log.Printf("end of copy from %s to %s\n", src.RemoteAddr(), dst.RemoteAddr())
+	tcpConn, ok := dst.(*net.TCPConn)
+	if ok {
+		if err := tcpConn.CloseWrite(); err != nil {
+			log.Printf("Error while terminating connection: %v", err)
+		}
+	}
 }
