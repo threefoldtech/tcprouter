@@ -7,16 +7,12 @@ A down to earth tcp router based on traefik tcp streaming and supports multiple 
 
 ```
 git clone https://github.com/xmonader/tcprouter 
-cd tcprouter
-go build
+make all
 ```
+This will generate two binaries in bin dir
 
-## Install
-
-```bash
-go get -u github.com/xmonader/tcprouter
-```
-
+- `trs`: tcp router server
+- `trc`: tcp router client
 
 
 ## Running
