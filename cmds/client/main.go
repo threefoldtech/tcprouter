@@ -44,11 +44,7 @@ func main() {
 		}
 
 		log.Printf("wait incoming traffic")
-		if err := client.Forward(); err != nil {
-			log.Fatalf("error during forwarding %v", err)
-		}
-
-		client.Close()
+		client.Forward()
 	}
 
 }
