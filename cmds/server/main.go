@@ -4,9 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"os/signal"
 
-	"log"
 	"os"
 	"time"
 
@@ -25,7 +26,10 @@ var validBackends = map[string]store.Backend{
 func readConfig(path string) (tcprouter.Config, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		log.Fatalf("failed to open configuration file at %s: %v", path, err)
+		log.Fatal().
+			Str("path", path).
+			Err(err).
+			Msg("failed to open configuration file")
 	}
 	defer f.Close()
 
@@ -63,25 +67,30 @@ var (
 
 func main() {
 
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+
 	flag.StringVar(&cfgPath, "config", "", "Configuration file path")
 	flag.Parse()
 
 	log.Printf("reading config from: %v", cfgPath)
 	cfg, err := readConfig(cfgPath)
 	if err != nil {
-		log.Fatalf("failed to read configuration: %v", err)
+		log.Fatal().Err(err).Msg("failed to read configuration")
 	}
 	log.Printf("main config: %+v", cfg)
 
 	if err := initBackend(cfg); err != nil {
-		log.Fatalf("failed to  initialize database backend: %v", err)
+		log.Fatal().Err(err).Msg("failed to  initialize database backend")
 	}
 
 	backend := cfg.Server.DbBackend.Backend()
 	addr := cfg.Server.DbBackend.Addr()
 	kv, err := initStore(backend, addr)
 	if err != nil {
-		log.Fatalf("Cannot create %s store: %v", backend, err)
+		log.Fatal().
+			Err(err).
+			Str("backend type", string(backend)).
+			Msg("Cannot create backend store")
 	}
 
 	serverOpts := tcprouter.ServerOptions{

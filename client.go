@@ -2,8 +2,8 @@ package tcprouter
 
 import (
 	"fmt"
+	"github.com/rs/zerolog/log"
 	"io"
-	"log"
 	"net"
 )
 
@@ -77,7 +77,7 @@ func (c *client) Forward() {
 
 	err := <-cErr
 	if err != nil {
-		log.Printf("Error during connection: %v", err)
+		log.Error().Err(err).Msg("Error during connection")
 	}
 
 	<-cErr
@@ -90,7 +90,7 @@ func forward(dst, src net.Conn, cErr chan<- error) {
 	tcpConn, ok := dst.(*net.TCPConn)
 	if ok {
 		if err := tcpConn.CloseWrite(); err != nil {
-			log.Printf("Error while terminating connection: %v", err)
+			log.Error().Err(err).Msg("Error while terminating connection")
 		}
 	}
 }
