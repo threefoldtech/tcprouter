@@ -4,9 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"net"
+
+	"github.com/rs/zerolog/log"
 )
 
 // Code extracted from traefik to get the servername from TLS connection.
@@ -54,7 +55,7 @@ func clientHelloServerName(br *bufio.Reader) (string, bool, string) {
 	hdr, err := br.Peek(1)
 	if err != nil {
 		if err != io.EOF {
-			fmt.Printf("Error while Peeking first byte: %s", err)
+			log.Error().Err(err).Msg("Error while Peeking first byte")
 		}
 		return "", false, ""
 	}
@@ -66,13 +67,13 @@ func clientHelloServerName(br *bufio.Reader) (string, bool, string) {
 	const recordHeaderLen = 5
 	hdr, err = br.Peek(recordHeaderLen)
 	if err != nil {
-		fmt.Printf("Error while Peeking hello: %s\n", err)
+		log.Error().Err(err).Msg("Error while Peeking hello")
 		return "", false, getPeeked(br)
 	}
 	recLen := int(hdr[3])<<8 | int(hdr[4]) // ignoring version in hdr[1:3]
 	helloBytes, err := br.Peek(recordHeaderLen + recLen)
 	if err != nil {
-		fmt.Printf("Error while Hello: %s\n", err)
+		log.Error().Err(err).Msg("Error while Hello")
 		return "", true, getPeeked(br)
 	}
 	sni := ""
@@ -89,7 +90,7 @@ func clientHelloServerName(br *bufio.Reader) (string, bool, string) {
 func getPeeked(br *bufio.Reader) string {
 	peeked, err := br.Peek(br.Buffered())
 	if err != nil {
-		fmt.Printf("Could not get anything: %s\n", err)
+		log.Error().Err(err).Msg("Could not get anything")
 		return ""
 	}
 	return string(peeked)
