@@ -53,6 +53,7 @@ We have two toml sections so far
 addr = "0.0.0.0"
 port = 443
 httpport = 80
+clientsport = 18000
 ```
 
 in `[server]` section we define the listening interface/port the tcprouter intercepting: typically that's 443 for TLS connections.
@@ -64,7 +65,7 @@ in `[server]` section we define the listening interface/port the tcprouter inter
 type    = "redis"
 addr    = "127.0.0.1"
 port    = 6379
-refresh = 10
+refresh = 5
 ```
 
 in `server.dbbackend` we define the backend kv store and its connection information `addr,port` and how often we want to reload the data from the kv store using `refresh` key in seconds.
@@ -128,8 +129,8 @@ func init() {
 
 type Service struct {
 	Addr string `json:"addr"`
-	SNI  string `json:"sni"`
-	Name string `json:"bing"`
+	TLSPort  int `json:"tlsport"`
+	HTTPPort int `json:"httpport"`
 }
 
 func main() {
@@ -145,9 +146,9 @@ func main() {
 	if err != nil {
 		log.Fatal("Cannot create store redis")
 	}
-	google := &Service{Addr:"172.217.19.46:443", SNI:"www.google.com", Name:"google"}
+	google := &Service{Addr:"172.217.19.46", HTTPPort: 80, TLSPort: 443}
 	encGoogle, _ := json.Marshal(google)
-	bing := &Service{Addr:"13.107.21.200:443", SNI:"www.bing.com", Name:"bing"}
+	bing := &Service{Addr:"13.107.21.200", HTTPPort: 80, TLSPort: 443}
 	encBing, _ := json.Marshal(bing)
 
 	kv.Put("/tcprouter/services/google", encGoogle, nil)
@@ -157,25 +158,25 @@ func main() {
 
 ### Python
 
-```python3
+```python
 import base64
 import json
 import redis
 
 r = redis.Redis()
 
-def create_service(name, sni, addr):
+def create_service(domain, addr, tlsport=443, httpport=80):
     service = {}
-    service['Key'] = '/tcprouter/service/{}'.format(name)
-    record = {"addr":addr, "sni":sni, "name":name}
+    service['Key'] = '/tcprouter/service/{}'.format(domain)
+    record = {"addr":addr, "tlsport": tlsport, "httpport": httpport}
     json_dumped_record_bytes = json.dumps(record).encode()
     b64_record = base64.b64encode(json_dumped_record_bytes).decode()
     service['Value'] = b64_record
     r.set(service['Key'], json.dumps(service))
 
-create_service('facebook', "www.facebook.com", "102.132.97.35:443")
-create_service('google', 'www.google.com', '172.217.19.46:443')
-create_service('bing', 'www.bing.com', '13.107.21.200:443')
+create_service("www.facebook.com", "102.132.97.35")
+create_service('www.google.com', '172.217.19.46')
+create_service('www.bing.com', '13.107.21.200')
 ```
 
 If you want to test that locally you can modify `/etc/hosts`
@@ -190,10 +191,9 @@ So your browser go to your `127.0.0.1:443` on requesting google or bing.
 
 ## CATCH_ALL
 
-to add a global `catch all` service
+To add a global `catch all` service
 
-`python3 create_service.py CATCH_ALL 'CATCH_ALL' '127.0.0.1:9092'`
-
+`create_service("CATCH_ALL", "102.132.97.35")`
 
 # Client
 
@@ -201,6 +201,21 @@ to add a global `catch all` service
 
 is small network component that's supposed to live in a container (on a private network) and it will connect to tcprouter and allows sockets to be forwarded into the container using a handshake
 
+## Examples
+
+Adding records in backend as the previous [example](#examples), but instead of `addr`, `tlsport` and `httpport` in  the record, `clientsecret` will be used.
+
+```python
+record = {"clientsecret": <secret>}
+```
+
+## Running
+
+```bash
+./trc -local <local_application_address> -remote <tcp_router_server_address> -secret <secret>
+```
+
+**Note:** The `secret` used in running the client, MUST be the same as the one stored in backend.
 
 # Handshake
 
