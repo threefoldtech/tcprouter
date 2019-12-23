@@ -5,11 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/rs/zerolog/log"
 	"net"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/abronan/valkeyrie/store"
 )
@@ -255,7 +256,7 @@ func (s *Server) handleService(mainconn net.Conn, serverName, peeked string, isT
 	}
 
 	if err != nil {
-		return fmt.Errorf("failed to forward traffic: %w", err)
+		return fmt.Errorf("failed to forward traffic: %v", err)
 	}
 
 	return nil
