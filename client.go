@@ -2,12 +2,13 @@ package tcprouter
 
 import (
 	"fmt"
-	"github.com/rs/zerolog/log"
 	"io"
 	"net"
+
+	"github.com/rs/zerolog/log"
 )
 
-type client struct {
+type Client struct {
 	// connection to the tcp router server
 	RemoteConn net.Conn
 	// connection to the local application
@@ -18,13 +19,13 @@ type client struct {
 }
 
 // NewClient creates a new TCP router client
-func NewClient(secret string) *client {
-	return &client{
+func NewClient(secret string) *Client {
+	return &Client{
 		secret: []byte(secret),
 	}
 }
 
-func (c *client) ConnectRemote(addr string) error {
+func (c *Client) ConnectRemote(addr string) error {
 	if len(c.secret) == 0 {
 		return fmt.Errorf("no secret configured")
 	}
@@ -39,7 +40,7 @@ func (c *client) ConnectRemote(addr string) error {
 	return nil
 }
 
-func (c *client) ConnectLocal(addr string) error {
+func (c *Client) ConnectLocal(addr string) error {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return err
@@ -50,7 +51,7 @@ func (c *client) ConnectLocal(addr string) error {
 	return nil
 }
 
-func (c *client) Handshake() error {
+func (c *Client) Handshake() error {
 	if c.RemoteConn == nil {
 		return fmt.Errorf("not connected")
 	}
@@ -64,7 +65,7 @@ func (c *client) Handshake() error {
 	return h.Write(c.RemoteConn)
 }
 
-func (c *client) Forward() {
+func (c *Client) Forward() {
 
 	cErr := make(chan error)
 	defer func() {
