@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/libp2p/go-yamux"
 	"github.com/rs/zerolog/log"
 
 	"github.com/abronan/valkeyrie/store"
@@ -35,11 +36,11 @@ func (o ServerOptions) ClientsAddr() string {
 }
 
 type Server struct {
-	ServerOptions     ServerOptions
-	DbStore           store.Store
-	Services          map[string]Service
-	backendM          sync.RWMutex
-	activeConnections map[string]net.Conn
+	ServerOptions ServerOptions
+	DbStore       store.Store
+	Services      map[string]Service
+
+	activeConnections map[string]*yamux.Session
 
 	listeners []net.Listener
 	wg        sync.WaitGroup
@@ -55,7 +56,7 @@ func NewServer(forwardOptions ServerOptions, store store.Store, services map[str
 		ServerOptions:     forwardOptions,
 		Services:          services,
 		DbStore:           store,
-		activeConnections: make(map[string]net.Conn),
+		activeConnections: make(map[string]*yamux.Session),
 		listeners:         []net.Listener{},
 	}
 }
@@ -99,7 +100,8 @@ func (s *Server) listen(ctx context.Context, addr string, handler Handler) {
 			Str("addr", addr).
 			Msg("failed to start listener")
 	}
-	s.listeners = append(s.listeners, ln)
+
+	s.listeners = append(s.listeners, tcpKeepAliveListener{ln})
 
 	for {
 		select {
@@ -115,7 +117,7 @@ func (s *Server) listen(ctx context.Context, addr string, handler Handler) {
 				}
 				log.Fatal().Err(err).Msg("Failed to accept connection")
 			}
-			// TODO: need to track these connection and close then when needed
+
 			go handler.ServeTCP(conn)
 		}
 	}
@@ -143,8 +145,21 @@ func (s *Server) getHost(host string) (Service, error) {
 }
 
 func (s *Server) handleTCPRouterClientConnection(conn WriteCloser) {
+	session, err := yamux.Server(conn, nil)
+	if err != nil {
+		log.Error().Err(err).Send()
+		return
+	}
+
+	stream, err := session.Accept()
+	if err != nil {
+		log.Error().Err(err).Send()
+		return
+	}
+	defer stream.Close()
+
 	hs := &Handshake{}
-	if err := hs.Read(conn); err != nil {
+	if err := hs.Read(stream); err != nil {
 		log.Error().Err(err).Msg("handshake failed")
 		conn.Close()
 		return
@@ -157,7 +172,8 @@ func (s *Server) handleTCPRouterClientConnection(conn WriteCloser) {
 	log.Info().
 		Str("remote addr", conn.RemoteAddr().String()).
 		Msg("handshake done... adding to active connections")
-	s.activeConnections[string(hs.Secret[:])] = conn
+
+	s.activeConnections[string(hs.Secret[:])] = session
 }
 
 func (s *Server) handleConnection(conn WriteCloser) {
@@ -218,7 +234,7 @@ func (s *Server) handleHTTPConnection(conn WriteCloser) {
 	}
 }
 
-func (s *Server) handleService(mainconn net.Conn, serverName, peeked string, isTLS bool) error {
+func (s *Server) handleService(incoming WriteCloser, serverName, peeked string, isTLS bool) error {
 	serverName = strings.ToLower(serverName)
 	service, exists := s.Services[serverName]
 	if exists == false {
@@ -237,32 +253,42 @@ func (s *Server) handleService(mainconn net.Conn, serverName, peeked string, isT
 
 	log.Info().Str("service", fmt.Sprintf("%v", service)).Msg("service found")
 
-	conn := GetConn(mainconn, peeked)
-	var err error
+	incoming = GetConn(incoming, peeked)
+	var (
+		outgoing net.Conn
+		err      error
+	)
 
 	if service.ClientSecret != "" {
+		// retrive an active connection and forward traffic on it
 		activeConn, ok := s.activeConnections[service.ClientSecret]
 		if !ok {
-			err = fmt.Errorf("no active connection for service %s", serverName)
-		} else {
-			s.forwardConnection(conn, activeConn)
+			return fmt.Errorf("no active connection for service %s", serverName)
 		}
+
+		log.Info().Msgf("open new stream to client %s", serverName)
+		outgoing, err = activeConn.Open()
+		if err != nil {
+			return fmt.Errorf("failed to open stream: %w", err)
+		}
+
 	} else {
+		// Dial target server and forward traffic on it
 		remotePort := service.HTTPPort
 		if isTLS {
 			remotePort = service.TLSPort
 		}
-		err = s.forwardConnectionToService(conn, service.Addr, remotePort)
+		outgoing, err = net.DialTCP("tcp", nil, &net.TCPAddr{IP: net.ParseIP(service.Addr), Port: remotePort})
+		if err != nil {
+			return fmt.Errorf("error while connection to service: %v", err)
+		}
 	}
 
-	if err != nil {
-		return fmt.Errorf("failed to forward traffic: %v", err)
-	}
-
+	forwardConnection(incoming, outgoing)
 	return nil
 }
 
-func (s *Server) forwardConnection(local, remote net.Conn) {
+func forwardConnection(local, remote net.Conn) {
 	log.Info().
 		Str("remote", remote.RemoteAddr().String()).
 		Str("local", local.RemoteAddr().String()).
@@ -289,14 +315,23 @@ func (s *Server) forwardConnection(local, remote net.Conn) {
 	<-cErr
 }
 
-func (s *Server) forwardConnectionToService(conn net.Conn, remoteAddr string, remotePort int) error {
-	remoteTCPAddr := &net.TCPAddr{IP: net.ParseIP(remoteAddr), Port: remotePort}
+type tcpKeepAliveListener struct {
+	*net.TCPListener
+}
 
-	connService, err := net.DialTCP("tcp", nil, remoteTCPAddr)
+func (ln tcpKeepAliveListener) Accept() (net.Conn, error) {
+	tc, err := ln.AcceptTCP()
 	if err != nil {
-		return fmt.Errorf("error while connection to service: %v", err)
+		return nil, err
 	}
 
-	s.forwardConnection(conn, connService)
-	return nil
+	if err = tc.SetKeepAlive(true); err != nil {
+		return nil, err
+	}
+
+	if err = tc.SetKeepAlivePeriod(3 * time.Minute); err != nil {
+		return nil, err
+	}
+
+	return tc, nil
 }

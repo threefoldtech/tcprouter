@@ -5,54 +5,85 @@ import (
 	"io"
 	"net"
 
+	"github.com/libp2p/go-yamux"
 	"github.com/rs/zerolog/log"
 )
 
 type Client struct {
-	// connection to the tcp router server
-	RemoteConn net.Conn
-	// connection to the local application
-	LocalConn net.Conn
-
+	localAddr  string
+	remoteAddr string
 	// secret used to identify the connection in the tcp router server
 	secret []byte
+
+	// connection to the tcp router server
+	remoteSession *yamux.Session
 }
 
 // NewClient creates a new TCP router client
-func NewClient(secret string) *Client {
+func NewClient(secret string, local, remote string) *Client {
 	return &Client{
-		secret: []byte(secret),
+		localAddr:  local,
+		remoteAddr: remote,
+		secret:     []byte(secret),
 	}
 }
 
-func (c *Client) ConnectRemote(addr string) error {
+func (c Client) Start() error {
+	if err := c.connectRemote(c.remoteAddr); err != nil {
+		return fmt.Errorf("failed to connect to TCP router server: %w", err)
+	}
+
+	log.Info().Msg("start hanshake")
+	if err := c.handshake(); err != nil {
+		return fmt.Errorf("failed to hanshake with TCP router server: %w", err)
+	}
+	log.Info().Msg("hanshake done")
+
+	return c.listen()
+}
+
+func (c *Client) connectRemote(addr string) error {
 	if len(c.secret) == 0 {
 		return fmt.Errorf("no secret configured")
 	}
 
-	conn, err := net.Dial("tcp", addr)
+	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
 	if err != nil {
 		return err
 	}
 
-	c.RemoteConn = conn
-
-	return nil
-}
-
-func (c *Client) ConnectLocal(addr string) error {
-	conn, err := net.Dial("tcp", addr)
+	conn, err := net.DialTCP("tcp", nil, tcpAddr)
 	if err != nil {
 		return err
 	}
 
-	c.LocalConn = conn
+	// Setup client side of yamux
+	session, err := yamux.Client(conn, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	c.remoteSession = session
 
 	return nil
 }
 
-func (c *Client) Handshake() error {
-	if c.RemoteConn == nil {
+func (c *Client) connectLocal(addr string) (net.Conn, error) {
+	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := net.DialTCP("tcp", nil, tcpAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	return conn, nil
+}
+
+func (c *Client) handshake() error {
+	if c.remoteSession == nil {
 		return fmt.Errorf("not connected")
 	}
 
@@ -62,36 +93,57 @@ func (c *Client) Handshake() error {
 	}
 	// at this point if the server refuse the hanshake it will
 	// just close the connection which should return an error
-	return h.Write(c.RemoteConn)
+	stream, err := c.remoteSession.OpenStream()
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+
+	return h.Write(stream)
 }
 
-func (c *Client) Forward() {
+func (c *Client) listen() error {
 
-	cErr := make(chan error)
-	defer func() {
-		c.RemoteConn.Close()
-		c.LocalConn.Close()
-	}()
+	for {
+		remote, err := c.remoteSession.Accept()
+		if err != nil {
+			return fmt.Errorf("failed to open remote stream: %w", err)
+		}
 
-	go forward(c.LocalConn, c.RemoteConn, cErr)
-	go forward(c.RemoteConn, c.LocalConn, cErr)
+		log.Info().
+			Str("remote add", remote.RemoteAddr().String()).
+			Msg("incoming stream, connect to local application")
 
-	err := <-cErr
-	if err != nil {
-		log.Error().Err(err).Msg("Error during connection")
+		local, err := c.connectLocal(c.localAddr)
+		if err != nil {
+			return fmt.Errorf("failed to connect to local application: %w", err)
+		}
+
+		go func(remote, local net.Conn) {
+			log.Info().Msg("start forwarding")
+
+			cErr := make(chan error)
+			go forward(local, remote, cErr)
+			go forward(remote, local, cErr)
+
+			err = <-cErr
+			if err != nil {
+				log.Error().Err(err).Msg("Error during forwarding: %w")
+			}
+
+			<-cErr
+
+			if err := remote.Close(); err != nil {
+				log.Error().Err(err).Msg("Error while terminating connection")
+			}
+			if err := local.Close(); err != nil {
+				log.Error().Err(err).Msg("Error while terminating connection")
+			}
+		}(remote, local)
 	}
-
-	<-cErr
 }
 
 func forward(dst, src net.Conn, cErr chan<- error) {
 	_, err := io.Copy(dst, src)
 	cErr <- err
-
-	tcpConn, ok := dst.(*net.TCPConn)
-	if ok {
-		if err := tcpConn.CloseWrite(); err != nil {
-			log.Error().Err(err).Msg("Error while terminating connection")
-		}
-	}
 }
