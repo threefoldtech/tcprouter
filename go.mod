@@ -1,4 +1,4 @@
-module github.com/xmonader/tcprouter
+module github.com/threefoldtech/tcprouter
 
 go 1.13
 
@@ -9,4 +9,5 @@ require (
 	github.com/magiconair/properties v1.8.1
 	github.com/rs/zerolog v1.15.0
 	github.com/stretchr/testify v1.3.0
+	github.com/urfave/cli/v2 v2.1.1
 )
