@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v3"
@@ -47,6 +48,11 @@ func main() {
 		cSig := make(chan os.Signal)
 		signal.Notify(cSig, os.Interrupt, os.Kill)
 
+		wg := sync.WaitGroup{}
+		wg.Add(len(remotes))
+
+		ctx, cancel := context.WithCancel(context.Background())
+
 		for _, remote := range remotes {
 			c := connection{
 				Secret:  secret,
@@ -55,11 +61,18 @@ func main() {
 				Backoff: backoff,
 			}
 			go func() {
-				start(context.TODO(), c)
+				defer func() {
+					wg.Done()
+					log.Info().Msgf("connection to %s stopped", c.Remote)
+				}()
+				start(ctx, c)
 			}()
 		}
 
 		<-cSig
+		log.Info().Msg("exit signal received, stopping")
+		cancel()
+		wg.Wait()
 
 		return nil
 	}
@@ -89,7 +102,7 @@ func start(ctx context.Context, c connection) {
 				return nil
 
 			default:
-				if err := client.Start(); err != nil {
+				if err := client.Start(ctx); err != nil {
 					log.Error().Err(err).Send()
 					return err
 				}
