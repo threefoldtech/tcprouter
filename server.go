@@ -42,9 +42,10 @@ type Server struct {
 
 	activeConnections map[string]*yamux.Session
 
-	listeners []net.Listener
-	wg        sync.WaitGroup
-	ctx       context.Context
+	listeners   []net.Listener
+	listenersMU sync.Mutex
+	wg          sync.WaitGroup
+	ctx         context.Context
 }
 
 func NewServer(forwardOptions ServerOptions, store store.Store, services map[string]Service) *Server {
@@ -70,6 +71,8 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.wg.Wait()
 	log.Info().Msg("stopping server...")
+	s.listenersMU.Lock()
+	defer s.listenersMU.Unlock()
 	for _, ln := range s.listeners {
 		if ln != nil {
 			if err := ln.Close(); err != nil {
@@ -101,7 +104,9 @@ func (s *Server) listen(ctx context.Context, addr string, handler Handler) {
 			Msg("failed to start listener")
 	}
 
+	s.listenersMU.Lock()
 	s.listeners = append(s.listeners, tcpKeepAliveListener{ln})
+	s.listenersMU.Unlock()
 
 	for {
 		select {
