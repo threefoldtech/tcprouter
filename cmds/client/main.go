@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v3"
@@ -48,6 +48,11 @@ func main() {
 		cSig := make(chan os.Signal)
 		signal.Notify(cSig, os.Interrupt, os.Kill)
 
+		wg := sync.WaitGroup{}
+		wg.Add(len(remotes))
+
+		ctx, cancel := context.WithCancel(context.Background())
+
 		for _, remote := range remotes {
 			c := connection{
 				Secret:  secret,
@@ -56,11 +61,18 @@ func main() {
 				Backoff: backoff,
 			}
 			go func() {
-				start(context.TODO(), c)
+				defer func() {
+					wg.Done()
+					log.Info().Msgf("connection to %s stopped", c.Remote)
+				}()
+				start(ctx, c)
 			}()
 		}
 
 		<-cSig
+		log.Info().Msg("exit signal received, stopping")
+		cancel()
+		wg.Wait()
 
 		return nil
 	}
@@ -79,7 +91,7 @@ type connection struct {
 }
 
 func start(ctx context.Context, c connection) {
-	client := tcprouter.NewClient(c.Secret)
+	client := tcprouter.NewClient(c.Secret, c.Local, c.Remote)
 
 	op := func() error {
 		for {
@@ -90,29 +102,10 @@ func start(ctx context.Context, c connection) {
 				return nil
 
 			default:
-
-				log.Info().
-					Str("addr", c.Remote).
-					Msg("connect to TCP router server")
-				if err := client.ConnectRemote(c.Remote); err != nil {
-					return fmt.Errorf("failed to connect to TCP router server: %w", err)
+				if err := client.Start(ctx); err != nil {
+					log.Error().Err(err).Send()
+					return err
 				}
-
-				log.Info().Msg("start hanshake")
-				if err := client.Handshake(); err != nil {
-					return fmt.Errorf("failed to hanshake with TCP router server: %w", err)
-				}
-				log.Info().Msg("hanshake done")
-
-				log.Info().
-					Str("addr", c.Local).
-					Msg("connect to local application")
-				if err := client.ConnectLocal(c.Local); err != nil {
-					return fmt.Errorf("failed to connect to local application: %w", err)
-				}
-
-				log.Info().Msg("wait incoming traffic")
-				client.Forward()
 			}
 		}
 	}

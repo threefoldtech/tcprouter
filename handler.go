@@ -1,6 +1,8 @@
 package tcprouter
 
-import "net"
+import (
+	"net"
+)
 
 // Handler is the TCP Handlers interface
 type Handler interface {

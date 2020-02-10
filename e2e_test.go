@@ -17,22 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testClient(t testing.TB, local, remote, secret string) {
-	log.Printf("start client local:%v remote:%v\n", local, remote)
-	client := NewClient(secret)
-
-	err := client.ConnectRemote(remote)
-	require.NoError(t, err)
-
-	err = client.Handshake()
-	require.NoError(t, err)
-
-	err = client.ConnectLocal(local)
-	require.NoError(t, err)
-
-	client.Forward()
-}
-
 func TestEnd2End(t *testing.T) {
 	sizes := []int{1, 128}
 	for _, size := range sizes {
@@ -87,7 +71,11 @@ func testEnd2End(t *testing.T, size int) {
 	require.NoError(t, err)
 	go func() {
 		defer wg.Done()
-		testClient(t, u.Host, fmt.Sprintf("%s:%d", domain, clientPort), secret)
+		local := u.Host
+		remote := fmt.Sprintf("%s:%d", domain, clientPort)
+		log.Printf("start client local:%v remote:%v\n", local, remote)
+		client := NewClient(secret, local, remote)
+		client.Start(ctx)
 	}()
 
 	// let everything settle
