@@ -29,7 +29,7 @@ func TestEnd2End(t *testing.T) {
 func testEnd2End(t *testing.T, size int) {
 
 	var (
-		domain          = "localhost.localdomain"
+		domain          = "localhost"
 		secret          = "foobar"
 		httpsPort  uint = 8000
 		httpPort   uint = 8001

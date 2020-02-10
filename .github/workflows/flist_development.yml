@@ -1,0 +1,65 @@
+name: Flist creation (development)
+on: 
+  push:
+    branches:
+      - '*'
+    tags-ignore:
+      - v*
+
+jobs:
+  build:
+    name: Build and upload
+    runs-on: ubuntu-latest
+    steps:
+
+    - name: Set up Go 1.13
+      uses: actions/setup-go@v1
+      with:
+        go-version: 1.13
+      id: go
+
+    - name: Checkout code into the Go module directory
+      uses: actions/checkout@v1
+
+    - name: Build binaries
+      run: make
+
+    - name: Collecting files
+      run: |
+        archive=${{ github.workspace }}/archive
+        mkdir -p ${archive}/bin
+        cp bin/* ${archive}/bin/
+
+    - name: Set name of the development build
+      id: setname
+      run: |
+        echo "::set-output name=build::tcprouter:v$(date +%y%m%d.%-H%M%S.0)-dev.flist"
+        
+    - name: Publish flist (${{ github.sha }})
+      if: success()
+      uses: threefoldtech/publish-flist@master
+      with:
+        token: ${{ secrets.HUB_JWT }}
+        action: publish
+        user: tf-autobuilder
+        root: archive
+        name: zos-${{ github.sha }}.flist
+    
+    - name: Symlink flist (development)
+      uses: threefoldtech/publish-flist@master
+      with:
+        token: ${{ secrets.HUB_JWT }}
+        action: symlink
+        user: tf-autobuilder
+        name: zos-${{ github.sha }}.flist
+        target: ${{ steps.setname.outputs.build }}
+
+    - name: Crosslink flist (development)
+      if: success() && github.ref == 'refs/heads/master'
+      uses: threefoldtech/publish-flist@master
+      with:
+        token: ${{ secrets.HUB_JWT }}
+        action: crosslink
+        user: tf-official-apps
+        name: tcprouter:latest.flist
+        target: tf-autobuilder/${{ steps.setname.outputs.build }}
