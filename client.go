@@ -21,7 +21,7 @@ type Client struct {
 }
 
 // NewClient creates a new TCP router client
-func NewClient(secret string, local, remote string) *Client {
+func NewClient(secret, local, remote string) *Client {
 	return &Client{
 		localAddr:  local,
 		remoteAddr: remote,
@@ -29,16 +29,18 @@ func NewClient(secret string, local, remote string) *Client {
 	}
 }
 
+// Start starts the client by opening a connection to the router server, doing the handshake
+// then start listening for incoming steam from the router server
 func (c Client) Start(ctx context.Context) error {
 	if err := c.connectRemote(c.remoteAddr); err != nil {
 		return fmt.Errorf("failed to connect to TCP router server: %w", err)
 	}
 
-	log.Info().Msg("start hanshake")
+	log.Info().Msg("start handshake")
 	if err := c.handshake(); err != nil {
-		return fmt.Errorf("failed to hanshake with TCP router server: %w", err)
+		return fmt.Errorf("failed to handshake with TCP router server: %w", err)
 	}
-	log.Info().Msg("hanshake done")
+	log.Info().Msg("handshake done")
 
 	return c.listen(ctx)
 }
@@ -69,7 +71,7 @@ func (c *Client) connectRemote(addr string) error {
 	return nil
 }
 
-func (c *Client) connectLocal(addr string) (net.Conn, error) {
+func (c *Client) connectLocal(addr string) (WriteCloser, error) {
 	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -92,7 +94,7 @@ func (c *Client) handshake() error {
 		MagicNr: MagicNr,
 		Secret:  []byte(c.secret),
 	}
-	// at this point if the server refuse the hanshake it will
+	// at this point if the server refuse the handshake it will
 	// just close the connection which should return an error
 	stream, err := c.remoteSession.OpenStream()
 	if err != nil {
@@ -107,20 +109,20 @@ func (c *Client) listen(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	cCon := make(chan net.Conn)
+	cCon := make(chan WriteCloser)
 	cErr := make(chan error)
-	go func(ctx context.Context, cCon chan<- net.Conn, cErr chan<- error) {
+	go func(ctx context.Context, cCon chan<- WriteCloser, cErr chan<- error) {
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			default:
-				conn, err := c.remoteSession.Accept()
+				conn, err := c.remoteSession.AcceptStream()
 				if err != nil {
 					cErr <- err
 					return
 				}
-				cCon <- conn
+				cCon <- WrapConn(conn)
 			}
 		}
 	}(ctx, cCon, cErr)
@@ -141,7 +143,7 @@ func (c *Client) listen(ctx context.Context) error {
 				return fmt.Errorf("failed to connect to local application: %w", err)
 			}
 
-			go func(remote, local net.Conn) {
+			go func(remote, local WriteCloser) {
 				log.Info().Msg("start forwarding")
 
 				cErr := make(chan error)
@@ -166,7 +168,23 @@ func (c *Client) listen(ctx context.Context) error {
 	}
 }
 
-func forward(dst, src net.Conn, cErr chan<- error) {
+func forward(dst, src WriteCloser, cErr chan<- error) {
 	_, err := io.Copy(dst, src)
 	cErr <- err
+	if err := dst.CloseWrite(); err != nil {
+		log.Error().Err(err).Msgf("error closing %s", dst.RemoteAddr().String())
+	}
+}
+
+type wrappedCon struct {
+	*yamux.Stream
+}
+
+// WrapConn wraps a stream into a wrappedCon so it implements the WriteCloser interface
+func WrapConn(conn *yamux.Stream) WriteCloser {
+	return wrappedCon{conn}
+}
+
+func (c wrappedCon) CloseWrite() error {
+	return c.Stream.Close()
 }

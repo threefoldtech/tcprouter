@@ -260,7 +260,7 @@ func (s *Server) handleService(incoming WriteCloser, serverName, peeked string, 
 
 	incoming = GetConn(incoming, peeked)
 	var (
-		outgoing net.Conn
+		outgoing WriteCloser
 		err      error
 	)
 
@@ -272,10 +272,11 @@ func (s *Server) handleService(incoming WriteCloser, serverName, peeked string, 
 		}
 
 		log.Info().Msgf("open new stream to client %s", serverName)
-		outgoing, err = activeConn.Open()
+		stream, err := activeConn.OpenStream()
 		if err != nil {
 			return fmt.Errorf("failed to open stream: %w", err)
 		}
+		outgoing = WrapConn(stream)
 
 	} else {
 		// Dial target server and forward traffic on it
@@ -293,7 +294,7 @@ func (s *Server) handleService(incoming WriteCloser, serverName, peeked string, 
 	return nil
 }
 
-func forwardConnection(local, remote net.Conn) {
+func forwardConnection(local, remote WriteCloser) {
 	log.Info().
 		Str("remote", remote.RemoteAddr().String()).
 		Str("local", local.RemoteAddr().String()).
