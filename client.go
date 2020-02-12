@@ -10,6 +10,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// Client connect to a tpc router server and opens a reverse tunnel
 type Client struct {
 	localAddr  string
 	remoteAddr string

@@ -16,6 +16,7 @@ import (
 	"github.com/abronan/valkeyrie/store"
 )
 
+// ServerOptions hold the configuration of server listeners
 type ServerOptions struct {
 	ListeningAddr           string
 	ListeningTLSPort        uint
@@ -23,18 +24,22 @@ type ServerOptions struct {
 	ListeningForClientsPort uint
 }
 
+// HTTPAddr returns the HTTP listener address
 func (o ServerOptions) HTTPAddr() string {
 	return fmt.Sprintf("%s:%d", o.ListeningAddr, o.ListeningHTTPPort)
 }
 
+// TLSAddr returns the TLS listener address
 func (o ServerOptions) TLSAddr() string {
 	return fmt.Sprintf("%s:%d", o.ListeningAddr, o.ListeningTLSPort)
 }
 
+// ClientsAddr returns the client listener address
 func (o ServerOptions) ClientsAddr() string {
 	return fmt.Sprintf("%s:%d", o.ListeningAddr, o.ListeningForClientsPort)
 }
 
+//Server is tcp router server
 type Server struct {
 	ServerOptions ServerOptions
 	DbStore       store.Store
@@ -45,9 +50,9 @@ type Server struct {
 	listeners   []net.Listener
 	listenersMU sync.Mutex
 	wg          sync.WaitGroup
-	ctx         context.Context
 }
 
+// NewServer creates a new server
 func NewServer(forwardOptions ServerOptions, store store.Store, services map[string]Service) *Server {
 	if services == nil {
 		services = make(map[string]Service)
@@ -62,6 +67,7 @@ func NewServer(forwardOptions ServerOptions, store store.Store, services map[str
 	}
 }
 
+// Start starts the server and blocks forever
 func (s *Server) Start(ctx context.Context) error {
 
 	s.wg.Add(3)
@@ -139,7 +145,7 @@ func (s *Server) getHost(host string) (Service, error) {
 
 	err = json.Unmarshal(servicePair.Value, &service)
 	if err != nil {
-		return service, fmt.Errorf("Invalid service content")
+		return service, fmt.Errorf("invalid service content")
 	}
 
 	log.Debug().
@@ -242,16 +248,16 @@ func (s *Server) handleHTTPConnection(conn WriteCloser) {
 func (s *Server) handleService(incoming WriteCloser, serverName, peeked string, isTLS bool) error {
 	serverName = strings.ToLower(serverName)
 	service, exists := s.Services[serverName]
-	if exists == false {
+	if !exists {
 		log.Info().Msg("not found in file config, try to load it from db backend")
 		var err error
 		service, err = s.getHost(serverName)
 		exists = err == nil
 	}
 
-	if exists == false {
+	if !exists {
 		service, exists = s.Services["CATCH_ALL"]
-		if exists == false {
+		if !exists {
 			return fmt.Errorf("service doesn't exist: %v and no 'CATCH_ALL' service for request", service)
 		}
 	}
