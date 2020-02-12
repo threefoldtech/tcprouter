@@ -6,6 +6,7 @@ import (
 )
 
 const (
+	// MagicNr is the bytes sent during handshake to identity a tcprouter client connection
 	// TODO: chose a valid magic number
 	MagicNr = 0x1111
 )

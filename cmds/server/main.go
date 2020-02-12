@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os/signal"
+	"syscall"
 
+	"github.com/BurntSushi/toml"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli/v2"
@@ -34,7 +36,8 @@ func readConfig(path string) (tcprouter.Config, error) {
 	}
 	defer f.Close()
 
-	c, err := tcprouter.ParseCfg(f)
+	var c tcprouter.Config
+	_, err = toml.DecodeReader(f, &c)
 	if err != nil {
 		return c, fmt.Errorf("failed to read configuration %w", err)
 	}
@@ -61,10 +64,6 @@ func initStore(backend store.Backend, addr string) (store.Store, error) {
 		},
 	)
 }
-
-var (
-	cfgPath string
-)
 
 func main() {
 	app := cli.NewApp()
@@ -111,7 +110,7 @@ func main() {
 		s := tcprouter.NewServer(serverOpts, kv, cfg.Server.Services)
 
 		cSig := make(chan os.Signal, 1)
-		signal.Notify(cSig, os.Interrupt, os.Kill)
+		signal.Notify(cSig, os.Interrupt, syscall.SIGTERM)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		go func() {
