@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/cenkalti/backoff/v3"
@@ -45,8 +46,8 @@ func main() {
 		backoff := c.Int("backoff")
 		secret := c.String("secret")
 
-		cSig := make(chan os.Signal)
-		signal.Notify(cSig, os.Interrupt, os.Kill)
+		cSig := make(chan os.Signal, 1)
+		signal.Notify(cSig, os.Interrupt, syscall.SIGTERM)
 
 		wg := sync.WaitGroup{}
 		wg.Add(len(remotes))

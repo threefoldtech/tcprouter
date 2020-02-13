@@ -2,9 +2,7 @@ package tcprouter
 
 import (
 	"fmt"
-	"io"
 
-	"github.com/BurntSushi/toml"
 	"github.com/abronan/valkeyrie/store"
 )
 
@@ -14,10 +12,12 @@ var validBackends = map[string]store.Backend{
 	"etcd":   store.ETCDV3,
 }
 
+// Config hold the server configuration
 type Config struct {
 	Server ServerConfig `toml:"server"`
 }
 
+// ServerConfig configures the server listeners and backend
 type ServerConfig struct {
 	Host        string             `toml:"addr"`
 	Port        uint               `toml:"port"`
@@ -27,10 +27,12 @@ type ServerConfig struct {
 	Services    map[string]Service `toml:"services"`
 }
 
+// Addr returns the listenting address of the server
 func (s ServerConfig) Addr() string {
 	return fmt.Sprintf("%s:%d", s.Host, s.Port)
 }
 
+// Service defines a proxy configuration
 type Service struct {
 	Addr         string `toml:"addr"`
 	ClientSecret string `toml:"clientsecret` // will forward connection to it directly instead of hitting the Addr.
@@ -38,6 +40,7 @@ type Service struct {
 	HTTPPort     int    `toml:"httpport"`
 }
 
+// DbBackendConfig define the connection to a backend store
 type DbBackendConfig struct {
 	DbType   string `toml:"type"`
 	Host     string `toml:"addr"`
@@ -49,20 +52,16 @@ type DbBackendConfig struct {
 	//Bucket string `toml:"bucket"`
 }
 
+// Addr returns the listenting address of the server
 func (b DbBackendConfig) Addr() string {
 	return fmt.Sprintf("%s:%d", b.Host, b.Port)
 }
 
+// Backend return the Backend object of the b.DbType
 func (b DbBackendConfig) Backend() store.Backend {
 	backend, ok := validBackends[b.DbType]
 	if !ok {
 		panic(fmt.Sprintf("unsupported backend type '%s'", b.DbType))
 	}
 	return backend
-}
-
-func ParseCfg(r io.Reader) (Config, error) {
-	var conf Config
-	_, err := toml.DecodeReader(r, &conf)
-	return conf, err
 }
