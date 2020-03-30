@@ -234,8 +234,10 @@ func (s *Server) handleHTTPConnection(conn WriteCloser) {
 	}
 	if host == "" {
 		log.Error().Msg("could not find host in HTTP header")
+		conn.Close()
 		return
 	}
+	peeked += getPeeked(br)
 	log.Info().Msgf("Host found: '%s'", host)
 	if err := s.handleService(conn, host, peeked, false); err != nil {
 		log.Error().
@@ -258,6 +260,7 @@ func (s *Server) handleService(incoming WriteCloser, serverName, peeked string, 
 	if !exists {
 		service, exists = s.Services["CATCH_ALL"]
 		if !exists {
+			incoming.Close()
 			return fmt.Errorf("service doesn't exist: %v and no 'CATCH_ALL' service for request", service)
 		}
 	}
@@ -274,12 +277,14 @@ func (s *Server) handleService(incoming WriteCloser, serverName, peeked string, 
 		// retrive an active connection and forward traffic on it
 		activeConn, ok := s.activeConnections[service.ClientSecret]
 		if !ok {
+			incoming.Close()
 			return fmt.Errorf("no active connection for service %s", serverName)
 		}
 
 		log.Info().Msgf("open new stream to client %s", serverName)
 		stream, err := activeConn.OpenStream()
 		if err != nil {
+			incoming.Close()
 			return fmt.Errorf("failed to open stream: %w", err)
 		}
 		outgoing = WrapConn(stream)
@@ -292,6 +297,7 @@ func (s *Server) handleService(incoming WriteCloser, serverName, peeked string, 
 		}
 		outgoing, err = net.DialTCP("tcp", nil, &net.TCPAddr{IP: net.ParseIP(service.Addr), Port: remotePort})
 		if err != nil {
+			incoming.Close()
 			return fmt.Errorf("error while connection to service: %v", err)
 		}
 	}
