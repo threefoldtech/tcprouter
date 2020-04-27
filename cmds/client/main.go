@@ -22,21 +22,25 @@ func main() {
 	app.EnableBashCompletion = true
 	app.Flags = []cli.Flag{
 		&cli.StringFlag{
-			Name:  "secret",
-			Usage: "secret to identify the connection",
+			Name:    "secret",
+			Usage:   "secret to identify the connection",
+			EnvVars: []string{"TRC_SECRET"},
 		},
 		&cli.StringSliceFlag{
-			Name:  "remote",
-			Usage: "address to the TCP router server, this flag can be used multiple time to connect to multiple server",
+			Name:    "remote",
+			Usage:   "address to the TCP router server, this flag can be used multiple time to connect to multiple server",
+			EnvVars: []string{"TRC_REMOTE"},
 		},
 		&cli.StringFlag{
-			Name:  "local",
-			Usage: "address to the local application",
+			Name:    "local",
+			Usage:   "address to the local application",
+			EnvVars: []string{"TRC_LOCAL"},
 		},
 		&cli.IntFlag{
-			Name:  "backoff",
-			Value: 5,
-			Usage: "backoff in second",
+			Name:    "backoff",
+			Value:   5,
+			Usage:   "backoff in second",
+			EnvVars: []string{"TRC_BACKOFF"},
 		},
 	}
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
