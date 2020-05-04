@@ -232,3 +232,8 @@ The following command will connect the the server located at `tcprouter-1.com`, 
 
 
 `trc -local localhost:8080 -remote tcprouter-1.com -secret TB2pbZ5FR8GQZp9W2z97jBjxSgWgQKaQTxEgrZNBa4pEFzv3PJcRVEtG2a5BU9qd`
+
+
+To forward tls traffic to a difference port than none-tls traffic add the `--local-tls` flag
+
+`trc -local localhost:8080 -local-tls localhost:443 -remote tcprouter-1.com -secret TB2pbZ5FR8GQZp9W2z97jBjxSgWgQKaQTxEgrZNBa4pEFzv3PJcRVEtG2a5BU9qd`

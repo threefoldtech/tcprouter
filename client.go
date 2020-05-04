@@ -1,6 +1,7 @@
 package tcprouter
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -12,8 +13,9 @@ import (
 
 // Client connect to a tpc router server and opens a reverse tunnel
 type Client struct {
-	localAddr  string
-	remoteAddr string
+	localAddr    string
+	localTLSAddr string
+	remoteAddr   string
 	// secret used to identify the connection in the tcp router server
 	secret []byte
 
@@ -22,11 +24,12 @@ type Client struct {
 }
 
 // NewClient creates a new TCP router client
-func NewClient(secret, local, remote string) *Client {
+func NewClient(secret, local, localTLS, remote string) *Client {
 	return &Client{
-		localAddr:  local,
-		remoteAddr: remote,
-		secret:     []byte(secret),
+		localAddr:    local,
+		localTLSAddr: localTLS,
+		remoteAddr:   remote,
+		secret:       []byte(secret),
 	}
 }
 
@@ -139,10 +142,19 @@ func (c *Client) listen(ctx context.Context) error {
 				Str("remote add", remote.RemoteAddr().String()).
 				Msg("incoming stream, connect to local application")
 
-			local, err := c.connectLocal(c.localAddr)
+			var err error
+			var local WriteCloser
+			br := bufio.NewReader(remote)
+			_, isTLS, peeked := clientHelloServerName(br)
+			if isTLS {
+				local, err = c.connectLocal(c.localTLSAddr)
+			} else {
+				local, err = c.connectLocal(c.localAddr)
+			}
 			if err != nil {
 				return fmt.Errorf("failed to connect to local application: %w", err)
 			}
+			incoming := GetConn(remote, peeked)
 
 			go func(remote, local WriteCloser) {
 				log.Info().Msg("start forwarding")
@@ -164,7 +176,7 @@ func (c *Client) listen(ctx context.Context) error {
 				if err := local.Close(); err != nil {
 					log.Error().Err(err).Msg("Error while terminating connection")
 				}
-			}(remote, local)
+			}(incoming, local)
 		}
 	}
 }
