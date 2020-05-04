@@ -74,7 +74,7 @@ func testEnd2End(t *testing.T, size int) {
 		local := u.Host
 		remote := fmt.Sprintf("%s:%d", domain, clientPort)
 		log.Printf("start client local:%v remote:%v\n", local, remote)
-		client := NewClient(secret, local, remote)
+		client := NewClient(secret, local, local, remote)
 		client.Start(ctx)
 	}()
 

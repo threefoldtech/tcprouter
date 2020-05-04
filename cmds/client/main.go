@@ -36,6 +36,11 @@ func main() {
 			Usage:   "address to the local application",
 			EnvVars: []string{"TRC_LOCAL"},
 		},
+		&cli.StringFlag{
+			Name:    "local-tls",
+			Usage:   "address to the local tls application",
+			EnvVars: []string{"TRC_LOCAL"},
+		},
 		&cli.IntFlag{
 			Name:    "backoff",
 			Value:   5,
@@ -47,6 +52,10 @@ func main() {
 	app.Action = func(c *cli.Context) error {
 		remotes := c.StringSlice("remote")
 		local := c.String("local")
+		localtls := c.String("local-tls")
+		if len(localtls) == 0 {
+			localtls = local
+		}
 		backoff := c.Int("backoff")
 		secret := c.String("secret")
 
@@ -60,10 +69,11 @@ func main() {
 
 		for _, remote := range remotes {
 			c := connection{
-				Secret:  secret,
-				Remote:  remote,
-				Local:   local,
-				Backoff: backoff,
+				Secret:   secret,
+				Remote:   remote,
+				Local:    local,
+				LocalTLS: localtls,
+				Backoff:  backoff,
 			}
 			go func() {
 				defer func() {
@@ -89,14 +99,15 @@ func main() {
 }
 
 type connection struct {
-	Secret  string
-	Remote  string
-	Local   string
-	Backoff int
+	Secret   string
+	Remote   string
+	Local    string
+	LocalTLS string
+	Backoff  int
 }
 
 func start(ctx context.Context, c connection) {
-	client := tcprouter.NewClient(c.Secret, c.Local, c.Remote)
+	client := tcprouter.NewClient(c.Secret, c.Local, c.LocalTLS, c.Remote)
 
 	op := func() error {
 		for {
