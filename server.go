@@ -46,6 +46,7 @@ type Server struct {
 	Services      map[string]Service
 
 	activeConnections map[string]*yamux.Session
+	connsLock         sync.RWMutex
 
 	listeners   []net.Listener
 	listenersMU sync.Mutex
@@ -184,7 +185,9 @@ func (s *Server) handleTCPRouterClientConnection(conn WriteCloser) {
 		Str("remote addr", conn.RemoteAddr().String()).
 		Msg("handshake done... adding to active connections")
 
+	s.connsLock.Lock()
 	s.activeConnections[string(hs.Secret[:])] = session
+	s.connsLock.Unlock()
 }
 
 func (s *Server) handleConnection(conn WriteCloser) {
@@ -285,7 +288,12 @@ func (s *Server) handleService(incoming WriteCloser, serverName, peeked string, 
 		stream, err := activeConn.OpenStream()
 		if err != nil {
 			incoming.Close()
+			activeConn.Close()
+			s.connsLock.Lock()
+			delete(s.activeConnections, service.ClientSecret)
+			s.connsLock.Unlock()
 			return fmt.Errorf("failed to open stream: %w", err)
+
 		}
 		outgoing = WrapConn(stream)
 
